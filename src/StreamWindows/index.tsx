@@ -34,25 +34,43 @@ const VSS = () => findStore("VoiceStateStore") as any;
 const SelectedChannel = () => findByProps("getVoiceChannelId", "getChannelId") as any;
 /** Discord's "watch this stream" thunk: v(streamDescriptor, opts) -> dispatch STREAM_WATCH. */
 const watchStreamFn = () => findByCode("STREAM_WATCH", "streamKey") as any;
+const SelectParticipant = () => findByProps("selectParticipant") as any;
 
 const streamKeyString = (s: any) =>
     s?.streamType === "call"
         ? `call:${s.channelId}:${s.ownerId}`
         : `guild:${s.guildId}:${s.channelId}:${s.ownerId}`;
 
+function streamState(key: string) {
+    const s = ASS();
+    return {
+        viewers: s?.getViewerIds?.(key),
+        rtc: !!s?.getRTCStream?.(key),
+        active: (s?.getAllActiveStreams?.() ?? []).map(streamKeyString)
+    };
+}
+
 /**
- * Ensure `stream` is in the current watch set (multistream) WITHOUT replacing it
- * or stealing focus, so the participant gets a decoded feed / streamId.
+ * Ensure `stream` is decoding: add to watch set (multistream, no replace/focus)
+ * AND select the participant so the media engine actually pulls frames.
  */
-function ensureWatching(stream: any) {
+function ensureWatching(stream: any, channelId: string) {
+    const key = streamKeyString(stream);
+    log("watch: before", streamState(key));
+
     const fn = watchStreamFn();
     if (typeof fn === "function") {
-        try { fn(stream, { forceMultiple: true, noFocus: true }); return; }
+        try { fn(stream, { forceMultiple: true, noFocus: true }); }
         catch (e: any) { log("watch thunk threw", e?.message); }
+    } else {
+        try { FluxDispatcher.dispatch({ type: "STREAM_WATCH", streamKey: key, allowMultiple: true } as any); }
+        catch (e: any) { log("STREAM_WATCH dispatch threw", e?.message); }
     }
-    try {
-        FluxDispatcher.dispatch({ type: "STREAM_WATCH", streamKey: streamKeyString(stream), allowMultiple: true } as any);
-    } catch (e: any) { log("STREAM_WATCH dispatch threw", e?.message); }
+
+    try { SelectParticipant()?.selectParticipant?.(channelId, key); }
+    catch (e: any) { log("selectParticipant threw", e?.message); }
+
+    setTimeout(() => log("watch: +1s", streamState(key)), 1000);
 }
 
 function connectedVoiceChannelId(): string | undefined {
@@ -78,19 +96,15 @@ function popOut(channelId: string, userId: string) {
     if (already) { log("already open:", already); return; }
 
     const stream = streamForUser(userId);
-    if (stream) {
-        log("ensureWatching", streamKeyString(stream));
-        ensureWatching(stream);
-    } else {
-        log("no stream object for", userId, "— popping anyway");
-    }
+    if (stream) ensureWatching(stream, channelId);
+    else log("no stream object for", userId, "— popping anyway");
 
-    // give the media engine a beat to assign a streamId before the tile mounts
+    // give the media engine time to start decoding before the tile mounts
     setTimeout(() => {
         log("openCallTilePopout(", channelId, ",", userId, ")");
         P.openCallTilePopout(channelId, userId);
         setTimeout(dumpKeys, 800);
-    }, 600);
+    }, 1300);
 }
 
 function popAllInConnectedChannel() {
@@ -208,7 +222,12 @@ export default definePlugin({
         (window as any).$sw = {
             popOut, popAllInConnectedChannel, setAlwaysOnTop, closeFor, closeAll,
             dumpKeys, discover,
-            getPopout, ASS, PWS, VSS, watchStreamFn, ensureWatching, connectedVoiceChannelId,
+            getPopout, ASS, PWS, VSS, watchStreamFn, SelectParticipant, ensureWatching,
+            connectedVoiceChannelId,
+            streamStateFor: (userId: string) => {
+                const s = streamForUser(userId);
+                return s ? streamState(streamKeyString(s)) : "no stream";
+            },
             components: {
                 streamIdOnReady: () => findComponentByCode("streamId", "onReady"),
                 videoStream: () => findComponentByCode("VideoStream")
