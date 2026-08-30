@@ -35,6 +35,31 @@ const SelectedChannel = () => findByProps("getVoiceChannelId", "getChannelId") a
 /** Discord's "watch this stream" thunk: v(streamDescriptor, opts) -> dispatch STREAM_WATCH. */
 const watchStreamFn = () => findByCode("STREAM_WATCH", "streamKey") as any;
 const SelectParticipant = () => findByProps("selectParticipant") as any;
+const MediaEngineStore = () => findStore("MediaEngineStore") as any;
+const VolumeActions = () => findByProps("setLocalVolume") as any;
+
+// context passed to get/setLocalVolume for Go Live stream audio (vs "default" voice)
+const STREAM_CTX = "stream";
+
+function getStreamVolume(streamKey: string): number {
+    try {
+        const v = MediaEngineStore()?.getLocalVolume?.(streamKey, STREAM_CTX);
+        return typeof v === "number" ? v : 100;
+    } catch { return 100; }
+}
+function setStreamVolume(streamKey: string, v: number) {
+    try { VolumeActions()?.setLocalVolume?.(streamKey, v, STREAM_CTX); }
+    catch (e: any) { log("setLocalVolume threw", e?.message); }
+}
+
+function toggleFullscreen(windowKey: string) {
+    const cur = !!PWS()?.isWindowFullScreen?.(windowKey);
+    for (const type of ["POPOUT_WINDOW_SET_FULLSCREEN", "POPOUT_WINDOW_FULLSCREEN"]) {
+        try { FluxDispatcher.dispatch({ type, key: windowKey, fullscreen: !cur } as any); }
+        catch (e: any) { log(type, "threw", e?.message); }
+    }
+    log("fullscreen", windowKey, "->", !cur, "(now", PWS()?.isWindowFullScreen?.(windowKey), ")");
+}
 
 const streamKeyString = (s: any) =>
     s?.streamType === "call"
@@ -166,7 +191,36 @@ function discover() {
 
     const s0 = (ASS()?.getAllApplicationStreams?.() ?? [])[0];
     log("sample stream obj:", s0, "keys:", s0 && Object.keys(s0));
-    log("ASS methods:", ASS() && Object.getOwnPropertyNames(Object.getPrototypeOf(ASS())).join(","));
+
+    // volume
+    const VA = VolumeActions();
+    log("VolumeActions:", VA ? Object.keys(VA).slice(0, 30).join(",") : "null");
+    if (VA?.setLocalVolume) log("   setLocalVolume src:", String(VA.setLocalVolume).slice(0, 400));
+    const MES = MediaEngineStore();
+    log("MediaEngineStore.getLocalVolume:", typeof MES?.getLocalVolume);
+    if (s0) {
+        const k = streamKeyString({ ...s0 });
+        for (const ctx of ["stream", "default", undefined]) {
+            try { log(`   getLocalVolume(key, ${ctx}) →`, MES?.getLocalVolume?.(k, ctx as any)); }
+            catch (e: any) { log(`   getLocalVolume(key, ${ctx}) threw`, e?.message); }
+        }
+    }
+    for (const p of ["MediaEngineContext", "StreamContext"]) {
+        try { const m: any = findByProps(p); log(`findByProps(${p}) →`, m ? JSON.stringify(m[p] ?? m) : "null"); }
+        catch { /* noop */ }
+    }
+
+    // fullscreen
+    log("PopoutWindowStore fullscreen getters:", {
+        isWindowFullScreen: typeof PWS()?.isWindowFullScreen,
+    });
+    for (const code of ["POPOUT_WINDOW_SET_FULLSCREEN", "POPOUT_WINDOW_FULLSCREEN", "SET_FULLSCREEN"]) {
+        try { const m: any = findByCode(code); log(`findByCode(${code}) →`, m ? (m.name || "fn") : "null"); if (m) log("   src:", String(m).slice(0, 400)); }
+        catch { /* noop */ }
+    }
+    const P: any = getPopout();
+    log("popout module methods:", P && Object.keys(P).join(","));
+
     dumpKeys();
 }
 
@@ -175,17 +229,20 @@ function discover() {
 const patch: NavContextMenuPatchCallback = (children, props: any) => {
     const user = props?.user;
     if (!user?.id) return;
-    if (!streamForUser(user.id)) return;
+    const stream = streamForUser(user.id);
+    if (!stream) return;
 
     const channelId = props?.channel?.id ?? VSS()?.getVoiceStateForUser?.(user.id)?.channelId;
     if (!channelId) return;
 
+    const streamKey = streamKeyString(stream);
     const connected = connectedVoiceChannelId();
     const canPop = !connected || connected === channelId;
-    const isOpen = !!existingWindowKey(channelId, user.id);
+    const winKey = existingWindowKey(channelId, user.id);
+    const isOpen = !!winKey;
 
     children.push(
-        <Menu.MenuGroup>
+        <Menu.MenuGroup label="StreamWindows">
             <Menu.MenuItem
                 id="streamwindows-popout"
                 label={isOpen ? "Stream Window Open" : "Pop Out Stream to Window"}
@@ -194,11 +251,34 @@ const patch: NavContextMenuPatchCallback = (children, props: any) => {
             />
             {isOpen && (
                 <Menu.MenuItem
+                    id="streamwindows-fullscreen"
+                    label="Toggle Fullscreen"
+                    action={() => toggleFullscreen(winKey!)}
+                />
+            )}
+            {isOpen && (
+                <Menu.MenuItem
                     id="streamwindows-close"
                     label="Close Stream Window"
+                    color="danger"
                     action={() => closeFor(channelId, user.id)}
                 />
             )}
+            <Menu.MenuControlItem
+                id="streamwindows-volume"
+                label="Stream Volume"
+                control={(cprops: any, ref: any) => (
+                    <Menu.MenuSliderControl
+                        ref={ref}
+                        {...cprops}
+                        minValue={0}
+                        maxValue={200}
+                        value={getStreamVolume(streamKey)}
+                        onChange={(v: number) => setStreamVolume(streamKey, v)}
+                        renderValue={(v: number) => `${Math.round(v)}%`}
+                    />
+                )}
+            />
         </Menu.MenuGroup>
     );
 };
