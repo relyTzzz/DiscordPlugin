@@ -1,104 +1,132 @@
 /*
  * StreamWindows — Vencord user plugin
- * Pop each watched Discord stream into its own OS window so it can live on a
- * separate monitor.
+ * Goal: pop each watched Discord stream into its own OS window for multi-monitor
+ * viewing.
  *
- * STATUS: scaffold. The transport (how stream pixels reach the child window) is
- * decided by spike/discord-console-spike.js — see README. Until that spike
- * passes, `openWindowForStream` below is the productised version of whichever
- * mode won.
+ * This build is DISCOVERY ONLY. Console probing (see ../../spike) established:
+ *   - PopoutWindowStore opens real OS windows positioned on any monitor
+ *     (log: `Opening popout window {key, encodedFeatures:'...left=1920,top=601'}`)
+ *   - stream frames ride a native per-streamId "direct frames" bus that already
+ *     serves multiple concurrent consumers (`count for stream: 2`)
+ *   - DirectVideo is the component that renders a stream by id
+ *     (logs: `[DirectVideo] attaching srcObject for <id>`)
  *
- * Verify against current Vencord source before relying on:
- *   - context-menu target id (see `CONTEXT_MENU_ID`)
- *   - the shape of the stream/participant object passed into the menu patch
- *   - VencordNative.pluginHelpers wiring for ./native
+ * On start (and via the "StreamWindows: re-run discovery" command) this resolves
+ * those modules with Vencord's finders and dumps their shape / source so we can
+ * write the real opener next. Open a stream + a native popout first so the lazy
+ * chunks are loaded.
  */
 
 import { definePluginSettings } from "@api/Settings";
-import { addContextMenuPatch, removeContextMenuPatch, NavContextMenuPatchCallback } from "@api/ContextMenu";
+import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
-import { Menu } from "@webpack/common";
+import { find, findByCode, findByProps, findStore } from "@webpack";
 
-// TODO(verify): the id Discord uses for the stream tile / voice-user context
-// menu. Candidates seen in the wild: "stream-context", "user-context".
-const CONTEXT_MENU_ID = "stream-context";
+const TAG = "%c[StreamWindows]";
+const CSS = "color:#5865F2;font-weight:bold";
+const log = (...a: any[]) => console.log(TAG, CSS, ...a);
 
 const settings = definePluginSettings({
-    transport: {
-        type: OptionType.SELECT,
-        description: "How stream pixels are moved into the popped window (set by the spike result)",
-        options: [
-            { label: "passthrough (srcObject, no re-encode)", value: "passthrough", default: true },
-            { label: "capture (video.captureStream)", value: "capture" }
-        ]
-    },
-    alwaysOnTop: {
+    verboseDiscovery: {
         type: OptionType.BOOLEAN,
-        description: "Keep popped windows above other apps",
-        default: false
-    },
-    rememberBounds: {
-        type: OptionType.BOOLEAN,
-        description: "Restore each window's last position/size (per stream owner)",
+        description: "Dump full module source during discovery (long)",
         default: true
     }
 });
 
-/** Renderer-side: find the <video> currently rendering `streamKey`'s feed. */
-function findStreamVideo(): HTMLVideoElement | null {
-    const vids = [...document.querySelectorAll("video")]
-        .filter(v => v.srcObject instanceof MediaStream && v.videoWidth > 0 && !v.paused)
-        .sort((a, b) => b.videoWidth * b.videoHeight - a.videoWidth * a.videoHeight);
-    // TODO: disambiguate by streamKey once we know how Discord tags the element.
-    return vids[0] ?? null;
+function summarize(o: any): string {
+    try {
+        if (o == null) return String(o);
+        if (typeof o === "function") return `fn ${o.name || "(anon)"} arity=${o.length}`;
+        const keys = Object.keys(o);
+        return `obj{${keys.slice(0, 50).join(", ")}${keys.length > 50 ? ", …" : ""}}`;
+    } catch (e: any) {
+        return `<summarize threw: ${e?.message}>`;
+    }
 }
 
-async function openWindowForStream(label: string) {
-    const srcVideo = findStreamVideo();
-    if (!srcVideo) return;
-
-    // --- Arch A: renderer-owned child window (matches the spike) ------------
-    const child = window.open("about:blank", `streamwindows:${label}`, "width=960,height=540");
-    if (!child) return;
-    child.document.title = `${label} — StreamWindows`;
-    child.document.body.style.cssText = "margin:0;background:#000;overflow:hidden";
-    const v = child.document.createElement("video");
-    v.autoplay = v.muted = v.playsInline = true;
-    v.style.cssText = "width:100vw;height:100vh;object-fit:contain";
-    v.srcObject = settings.store.transport === "capture"
-        ? (srcVideo as any).captureStream()
-        : srcVideo.srcObject;
-    child.document.body.appendChild(v);
-    await v.play().catch(() => {});
-
-    // --- Arch B (fallback, robust): native BrowserWindow + re-subscribe ----
-    // If Arch A stalls in the spike, replace the block above with:
-    //   await Native.openStreamWindow({ label, streamKey, alwaysOnTop: settings.store.alwaysOnTop });
-    // and let native.ts + a bundled popout.html re-acquire the MediaStream from
-    // Discord's media engine inside the new window.
+function src(o: any, n = 1600): string {
+    try {
+        const f = typeof o === "function" ? o : o?.open ?? o?.render ?? o?.default;
+        return typeof f === "function" ? String(f).slice(0, n) : "<no fn to stringify>";
+    } catch (e: any) {
+        return `<toString threw: ${e?.message}>`;
+    }
 }
 
-const patchStreamMenu: NavContextMenuPatchCallback = (children, props) => {
-    // props shape is unverified — log it once and adjust.
-    const label: string = props?.user?.username ?? props?.stream?.ownerId ?? "stream";
-    children.push(
-        <Menu.MenuItem
-            id="streamwindows-popout"
-            label="Pop Out to Window"
-            action={() => openWindowForStream(label)}
-        />
-    );
-};
+function q(label: string, fn: () => any) {
+    let r: any;
+    try {
+        r = fn();
+    } catch (e: any) {
+        log(label, "→ THREW", e?.message);
+        return;
+    }
+    if (!r) {
+        log(label, "→ null");
+        return;
+    }
+    log(label, "→", summarize(r));
+    if (settings.store.verboseDiscovery) log(label, "source:\n" + src(r));
+}
+
+function discover() {
+    log("=== discovery start ===");
+
+    // ---- PopoutWindowStore + its action creators ------------------------
+    q('findStore("PopoutWindowStore")', () => {
+        const s: any = findStore("PopoutWindowStore");
+        if (s) {
+            const proto = Object.getPrototypeOf(s);
+            log("  store methods:", [...Object.keys(s), ...Object.keys(proto)].join(", "));
+            for (const m of ["getWindowKeys", "getWindow", "getWindowOpen", "getState"]) {
+                try { log(`  ${m}() →`, s[m]?.()); } catch (e: any) { log(`  ${m}() threw`, e?.message); }
+            }
+        }
+        return s;
+    });
+
+    q('findByCode("Opening popout window")', () => findByCode("Opening popout window"));
+    q('findByProps("open","setAlwaysOnTop")', () => findByProps("open", "setAlwaysOnTop"));
+    q('findByProps("open","setBounds")', () => findByProps("open", "setBounds"));
+    q('findByProps("open","close","renderWindow")', () => findByProps("open", "close", "renderWindow"));
+    q('findByProps("PopoutWindow")', () => findByProps("PopoutWindow"));
+    q('findByProps("setAlwaysOnTop","setBounds")', () => findByProps("setAlwaysOnTop", "setBounds"));
+
+    // ---- stream video component / direct-frames api ---------------------
+    q('findByProps("DirectVideo")', () => findByProps("DirectVideo"));
+    q('findByCode("attaching srcObject for")', () => findByCode("attaching srcObject for"));
+    q('findByCode("direct frames for streamId")', () => findByCode("direct frames for streamId"));
+    q('findByCode("Subscribing to direct frames")', () => findByCode("Subscribing to direct frames"));
+    q('find(m => m?.render && /DirectVideo/.test(String(m.render)))',
+        () => find((m: any) => m?.render && /DirectVideo/.test(String(m.render))));
+
+    // ---- stream state stores (to enumerate streams / build stream keys) --
+    q('findStore("ApplicationStreamingStore")', () => findStore("ApplicationStreamingStore"));
+    q('findByProps("getAllApplicationStreams")', () => findByProps("getAllApplicationStreams"));
+    q('findByProps("getStreamForUser")', () => findByProps("getStreamForUser"));
+    q('findByProps("encodeStreamKey","decodeStreamKey")', () => findByProps("encodeStreamKey", "decodeStreamKey"));
+
+    log("=== discovery end === (paste everything above)");
+}
 
 export default definePlugin({
     name: "StreamWindows",
-    description: "Pop each watched stream into its own OS window for multi-monitor viewing.",
-    authors: [{ name: "theta", id: 0n }],
+    description: "Pop each watched stream into its own OS window (discovery build).",
+    authors: [{ name: "theta", id: 0n } as any],
     settings,
+    commands: [
+        {
+            name: "streamwindows-discover",
+            description: "StreamWindows: re-run module discovery",
+            execute: () => {
+                discover();
+                return { content: "StreamWindows discovery logged to console (Ctrl+Shift+I)." };
+            }
+        }
+    ],
     start() {
-        addContextMenuPatch(CONTEXT_MENU_ID, patchStreamMenu);
-    },
-    stop() {
-        removeContextMenuPatch(CONTEXT_MENU_ID, patchStreamMenu);
+        // slight delay so lazy chunks from an already-open stream are present
+        setTimeout(discover, 2000);
     }
 });
