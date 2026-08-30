@@ -99,10 +99,14 @@ function popOut(channelId: string, userId: string) {
     if (stream) ensureWatching(stream, channelId);
     else log("no stream object for", userId, "— popping anyway");
 
+    // pop the STREAM participant (identified by stream key), not the voice
+    // participant (identified by user id) — the latter has no streamId -> avatar.
+    const participantId = stream ? streamKeyString(stream) : userId;
+
     // give the media engine time to start decoding before the tile mounts
     setTimeout(() => {
-        log("openCallTilePopout(", channelId, ",", userId, ")");
-        P.openCallTilePopout(channelId, userId);
+        log("openCallTilePopout(", channelId, ",", participantId, ")");
+        P.openCallTilePopout(channelId, participantId);
         setTimeout(dumpKeys, 800);
     }, 1300);
 }
