@@ -1,25 +1,24 @@
 /*
- * StreamWindows — Vencord user plugin (discovery build 2)
+ * StreamWindows — Vencord user plugin (discovery build 3)
  *
- * Established so far (see ../../spike + discovery build 1):
- *   - Popout module (findByProps "open","setAlwaysOnTop"):
- *       open(key, render, features)  -> dispatch POPOUT_WINDOW_OPEN
- *       also: close, setAlwaysOnTop, openCallTilePopout, openChannelCallPopout,
- *             addStylesheet
- *   - PopoutWindowStore: getWindowKeys(), getWindow(key), getWindowOpen(), getState()
- *   - ApplicationStreamingStore resolves (enumerate streams / stream keys)
- *   - stream frames ride a native per-streamId "direct frames" bus, multi-consumer
- *     (log: "[DirectVideo] attaching srcObject for N" / "count for stream: 2")
+ * Mapped:
+ *   popoutModule.open(key, render, features)   -> POPOUT_WINDOW_OPEN  (custom keys REJECTED:
+ *                                                  unknown key opens discord.com/popout in browser)
+ *   popoutModule.close(key)                    -> POPOUT_WINDOW_CLOSE
+ *   popoutModule.setAlwaysOnTop(key, bool)     -> POPOUT_WINDOW_SET_ALWAYS_ON_TOP
+ *   popoutModule.openCallTilePopout(cid, pid)  -> CALL_TILE_POPOUT_WINDOW_OPEN  (registered! renders
+ *                                                  a participant's stream/video tile in a real window)
+ *   popoutModule.openChannelCallPopout(chan)   -> CHANNEL_CALL_POPOUT_WINDOW_OPEN
+ *   PopoutWindowStore: getWindowKeys/getWindow/getIsAlwaysOnTop/isWindowFullScreen/getState/...
+ *   ApplicationStreamingStore: getAllApplicationStreams/getActiveStreamForUser/getViewerIds/...
  *
- * Still needed: the stream <video> component to render inside our window, and how
- * a stream key maps to it. This build reads openCallTilePopout / openChannelCallPopout
- * source to find that, and gives console helpers to actually open a test window.
+ * THE question this build answers: does openCallTilePopout make ONE window per
+ * (channelId, participantId), or a single shared one? -> $sw.popTile / $sw.popAll
  *
- * Console: window.$sw.discover()  /  $sw.testWindow()  /  $sw.closeTest()
- * Chat command: /streamwindows-discover   (type in a channel, NOT devtools)
+ * Console helpers: window.$sw
+ * Chat command: /streamwindows-discover
  */
 
-import { Devs } from "@utils/constants";
 import definePlugin from "@utils/types";
 import { find, findByCode, findByProps, findComponentByCode, findStore } from "@webpack";
 import { React } from "@webpack/common";
@@ -34,131 +33,114 @@ const fnSrc = (f: any, n = 4000) => {
 };
 const methodsOf = (o: any) => {
     try {
-        const own = Object.getOwnPropertyNames(o);
         const proto = o && Object.getPrototypeOf(o);
         const pm = proto && proto !== Object.prototype ? Object.getOwnPropertyNames(proto) : [];
-        return [...new Set([...own, ...pm])].filter(k => k !== "constructor");
+        return [...new Set([...Object.getOwnPropertyNames(o), ...pm])].filter(k => k !== "constructor");
     } catch { return []; }
 };
-const tryCall = (label: string, fn: () => any) => {
-    try { log(label, "→", fn()); } catch (e: any) { log(label, "THREW", e?.message); }
+const shallow = (o: any) => {
+    const out: Record<string, any> = {};
+    if (!o || typeof o !== "object") return o;
+    for (const k in o) {
+        try {
+            const v = o[k];
+            out[k] = v && typeof v === "object" ? `[${v.constructor?.name || "obj"}]` : v;
+        } catch { out[k] = "<throws>"; }
+    }
+    return out;
 };
 
-// ---------------------------------------------------------------------------
+const getPopout = () =>
+    findByProps("open", "setAlwaysOnTop", "openCallTilePopout") ?? findByProps("open", "setAlwaysOnTop");
+const ASS = () => findStore("ApplicationStreamingStore") as any;
+const PWS = () => findStore("PopoutWindowStore") as any;
 
-function getPopoutModule() {
-    return findByProps("open", "setAlwaysOnTop", "openCallTilePopout")
-        ?? findByProps("open", "setAlwaysOnTop");
+function streams() {
+    const s = ASS()?.getAllApplicationStreams?.() ?? [];
+    s.forEach((st: any, i: number) => log(`stream[${i}]`, shallow(st)));
+    return s;
+}
+
+function popTile(channelId: string, participantId: string) {
+    const P: any = getPopout();
+    log("openCallTilePopout(", channelId, ",", participantId, ")");
+    P?.openCallTilePopout?.(channelId, participantId);
+    setTimeout(() => log("  → getWindowKeys():", PWS()?.getWindowKeys?.(), "| state keys:", Object.keys(PWS()?.getState?.() ?? {})), 900);
+}
+
+/** open a tile popout for every application stream; report how many windows result */
+function popAll() {
+    const s = streams();
+    const P: any = getPopout();
+    for (const st of s) {
+        const cid = st.channelId ?? st.channel_id;
+        const pid = st.ownerId ?? st.userId ?? st.user_id ?? st.streamerId;
+        log("  popping", { cid, pid });
+        P?.openCallTilePopout?.(cid, pid);
+    }
+    setTimeout(() => {
+        const keys = PWS()?.getWindowKeys?.() ?? [];
+        log(`RESULT: ${keys.length} popout window(s):`, keys);
+        keys.forEach((k: string) => log("  ", k, shallow(PWS()?.getWindow?.(k))));
+    }, 1500);
+}
+
+function popChannel(channelOrId: any) {
+    const P: any = getPopout();
+    P?.openChannelCallPopout?.(channelOrId);
+    setTimeout(() => log("  → getWindowKeys():", PWS()?.getWindowKeys?.()), 900);
+}
+
+function closeKey(key: string) { getPopout()?.close?.(key); log("close", key); }
+function closeAllPopouts() {
+    const keys = PWS()?.getWindowKeys?.() ?? [];
+    keys.forEach((k: string) => getPopout()?.close?.(k));
+    log("closed", keys);
 }
 
 function discover() {
-    log("=== discovery build 2 ===");
+    log("=== discovery build 3 ===");
+    const P: any = getPopout();
+    log("popout module methods:", P ? methodsOf(P).join(", ") : "NOT FOUND");
 
-    const P: any = getPopoutModule();
-    log("popout module:", P ? methodsOf(P).join(", ") : "NOT FOUND");
-    if (P) {
-        for (const m of ["open", "close", "setAlwaysOnTop", "openCallTilePopout", "openChannelCallPopout", "addStylesheet"]) {
-            log(`  ${m}():\n` + fnSrc(P[m]));
-        }
-    }
-
-    const PWS: any = findStore("PopoutWindowStore");
-    log("PopoutWindowStore:", PWS ? "ok" : "NOT FOUND", PWS && methodsOf(PWS).join(", "));
-    if (PWS) {
-        tryCall("  getWindowKeys()", () => PWS.getWindowKeys?.());
-        tryCall("  getState()", () => PWS.getState?.());
-    }
-
-    const ASS: any = findStore("ApplicationStreamingStore");
-    log("ApplicationStreamingStore:", ASS ? "ok" : "NOT FOUND", ASS && methodsOf(ASS).join(", "));
-    if (ASS) {
-        tryCall("  getAllApplicationStreams()", () => ASS.getAllApplicationStreams?.());
-        tryCall("  getAllActiveStreams()", () => ASS.getAllActiveStreams?.());
-        tryCall("  getCurrentUserActiveStream()", () => ASS.getCurrentUserActiveStream?.());
-    }
-
-    // stream key encode/decode
-    log("stream key utils:");
-    for (const probe of [
-        ["findByProps('encodeStreamKey')", () => findByProps("encodeStreamKey")],
-        ["findByProps('getStreamKey')", () => findByProps("getStreamKey")],
-        ["findByCode('\"guild\",') keyish", () => findByCode('"guild:"')],
-    ] as const) {
-        try { const r = probe[1](); log("  " + probe[0], "→", r ? methodsOf(r).join(",") : "null"); }
-        catch (e: any) { log("  " + probe[0], "threw", e?.message); }
-    }
-
-    // the stream video component
-    log("stream video component candidates:");
-    for (const probe of [
-        ["findByCode('handleReady for')", () => findByCode("handleReady for")],
-        ["findByCode('spinner visible for')", () => findByCode("spinner visible for")],
-        ["findByCode('attaching srcObject')", () => findByCode("attaching srcObject")],
-        ["findComponentByCode('streamId','onReady')", () => findComponentByCode("streamId", "onReady")],
-        ["findComponentByCode('VideoStream')", () => findComponentByCode("VideoStream")],
-        ["findByProps('VideoStream')", () => findByProps("VideoStream")],
-        ["find(m=>m?.displayName?.includes('DirectVideo'))",
-            () => find((m: any) => typeof m?.displayName === "string" && m.displayName.includes("DirectVideo"))],
-    ] as const) {
+    // who handles CALL_TILE_POPOUT_WINDOW_OPEN -> tells us the per-window key scheme
+    for (const code of ["CALL_TILE_POPOUT_WINDOW_OPEN", "CALL_TILE_POPOUT", "CHANNEL_CALL_POPOUT"]) {
         try {
-            const r: any = probe[1]();
-            log("  " + probe[0], "→", r
-                ? (r.displayName || r.name || methodsOf(r).slice(0, 20).join(","))
-                : "null");
-        } catch (e: any) { log("  " + probe[0], "threw", e?.message); }
+            const m: any = findByCode(code);
+            log(`findByCode(${JSON.stringify(code)}) →`, m ? (m.name || methodsOf(m).slice(0, 15).join(",")) : "null");
+            if (m) log("  src:\n" + fnSrc(m, 2500));
+        } catch (e: any) { log(`findByCode(${code}) threw`, e?.message); }
     }
 
-    log("=== end. also: $sw.testWindow() opens a blank test popout ===");
-    return P;
-}
+    log("PopoutWindowStore.getState() →", PWS()?.getState?.());
+    log("PopoutWindowStore.getWindowKeys() →", PWS()?.getWindowKeys?.());
 
-let testKey = "STREAMWINDOWS_TEST";
-function testWindow(features?: Record<string, any>) {
-    const P: any = getPopoutModule();
-    if (!P?.open) return log("no popout module");
-    const feats = { width: 640, height: 360, left: 120, top: 120, ...features };
-    log("open(", testKey, ", <render>,", feats, ")");
-    P.open(
-        testKey,
-        () => React.createElement(
-            "div",
-            { style: { width: "100%", height: "100%", background: "#101018", color: "#8f9", display: "flex", alignItems: "center", justifyContent: "center", font: "16px system-ui" } },
-            "StreamWindows test window — " + new Date().toLocaleTimeString()
-        ),
-        feats
-    );
-    setTimeout(() => {
-        const PWS: any = findStore("PopoutWindowStore");
-        log("after open, getWindowKeys() →", PWS?.getWindowKeys?.());
-    }, 500);
-}
-function closeTest() {
-    const P: any = getPopoutModule();
-    P?.close?.(testKey);
-    log("closed", testKey);
-}
-function setTestAlwaysOnTop(v: boolean) {
-    const P: any = getPopoutModule();
-    P?.setAlwaysOnTop?.(testKey, v);
-    log("setAlwaysOnTop", testKey, v);
+    log("--- current application streams ---");
+    streams();
+
+    log("=== end. Try: $sw.popAll()  (watch how many windows open) ===");
 }
 
 export default definePlugin({
     name: "StreamWindows",
-    description: "Pop each watched stream into its own OS window (discovery build 2).",
+    description: "Pop each watched stream into its own OS window (discovery build 3).",
     authors: [{ name: "theta", id: 0n } as any],
     commands: [
         {
             name: "streamwindows-discover",
-            description: "StreamWindows: dump module discovery to console",
-            execute: () => {
-                discover();
-                return { content: "StreamWindows discovery → console (Ctrl+Shift+I). Also try $sw.testWindow()" };
-            }
+            description: "StreamWindows: dump discovery to console",
+            execute: () => { discover(); return { content: "→ console. Then run $sw.popAll()" }; }
         }
     ],
     start() {
-        (window as any).$sw = { discover, testWindow, closeTest, setTestAlwaysOnTop, getPopoutModule };
+        (window as any).$sw = {
+            discover, streams, popTile, popAll, popChannel, closeKey, closeAllPopouts,
+            getPopout, ASS, PWS,
+            components: {
+                streamIdOnReady: () => findComponentByCode("streamId", "onReady"),
+                videoStream: () => findComponentByCode("VideoStream")
+            }
+        };
         setTimeout(discover, 2000);
         log("helpers on window.$sw");
     }
