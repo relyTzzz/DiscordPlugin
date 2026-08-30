@@ -35,16 +35,38 @@ Other resolved handles:
 - `findComponentByCode("streamId","onReady")` and
   `findComponentByCode("VideoStream")` both resolve.
 
+## Shipped
+
+Right-click a streamer → *Pop Out Stream to Window*; `/streamwindows` pops all in
+the connected channel. Each popped window gets an injected overlay (mute button,
+vertical volume slider, fullscreen) mounted into the popout's own document via
+`PopoutWindowStore.getWindow(key)`.
+
+Two non-obvious requirements, both discovered the hard way:
+- `openCallTilePopout`'s `participantId` must be the **stream key**
+  (`guild:<g>:<c>:<u>`), not the user id — a user id resolves to the voice
+  participant, which has no `streamId`, so the window shows an avatar.
+- The stream must already be **decoding** before the tile mounts. Call the watch
+  thunk (`findByCode("STREAM_WATCH","streamKey")`) as
+  `fn(streamDescriptor, { forceMultiple: true, noFocus: true })` — omitting
+  `forceMultiple` makes Discord *replace* the watch set and tears down an open
+  grid — then `selectParticipant`, wait ~1.3s, then pop.
+
+Volume/mute go through `setLocalVolume(id, v, "stream")` /
+`setLocalMute(id, bool, "stream")`. Never dispatch `AUDIO_SET_LOCAL_VOLUME`
+directly: `setLocalVolume` dispatches it *and* applies to the media engine, so a
+raw dispatch updates the store while leaving audio unchanged.
+
 ## Still open / next
 
-1. Exact window-key scheme for call-tile popouts (need it to dedupe, position,
-   per-window always-on-top). Dump `PopoutWindowStore.getState()` /
-   `getWindowKeys()` right after `openCallTilePopout`.
-2. Real trigger UI (context-menu item / button) instead of `window.$sw` console
-   helpers.
-3. Edge cases: only offer for streamers in your connected voice channel; close
-   / show "stream ended" when a stream stops; dedupe repeat opens.
-4. Nice-to-have: remember per-streamer window bounds; "spread across monitors".
+1. Overlay mounts via a 1.5s poll; a `PopoutWindowStore` subscription would be
+   cleaner.
+2. Overlay doesn't live-update when volume/mute is changed from Discord's own
+   right-click menu.
+3. No "stream ended" handling — window stays until closed.
+4. Volume is written under both stream key and owner id because it's unconfirmed
+   which one Discord actually reads; narrow it once verified.
+5. Nice-to-have: "spread windows across monitors" command.
 
 ## Dev loop
 

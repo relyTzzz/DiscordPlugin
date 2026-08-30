@@ -18,7 +18,7 @@
 
 import { addContextMenuPatch, NavContextMenuPatchCallback, removeContextMenuPatch } from "@api/ContextMenu";
 import definePlugin from "@utils/types";
-import { findByCode, findByProps, findComponentByCode, findStore } from "@webpack";
+import { find, findByCode, findByProps, findStore } from "@webpack";
 import { FluxDispatcher, Menu } from "@webpack/common";
 
 const TAG = "%c[StreamWindows]";
@@ -56,16 +56,19 @@ function getStreamVolume(streamKey: string): number {
     return byKey ?? byOwner ?? 100;
 }
 
+/*
+ * setLocalVolume(id, volume, context) already dispatches AUDIO_SET_LOCAL_VOLUME
+ * *and* applies to the media engine; a raw dispatch would skip the engine apply,
+ * so never do that. Discord names the param `userId`, but stream volume has been
+ * observed under both the owner id and the full stream key, so write both — a
+ * write to the unused one is an inert store entry.
+ */
 function setStreamVolume(streamKey: string, v: number) {
     const VA = VolumeActions();
-    const owner = ownerFromKey(streamKey);
-    for (const id of [streamKey, owner]) {
+    for (const id of [streamKey, ownerFromKey(streamKey)]) {
         try { VA?.setLocalVolume?.(id, v, STREAM_CTX); }
         catch (e: any) { log("setLocalVolume", id, "threw", e?.message); }
-        try { FluxDispatcher.dispatch({ type: "AUDIO_SET_LOCAL_VOLUME", context: STREAM_CTX, userId: id, volume: v } as any); }
-        catch (e: any) { log("AUDIO_SET_LOCAL_VOLUME", id, "threw", e?.message); }
     }
-    log("vol set", v, "→ reads key:", readVol(streamKey), "owner:", readVol(owner));
 }
 
 function isStreamMuted(streamKey: string): boolean {
@@ -177,9 +180,17 @@ function mountOverlay(win: any, streamKey: string) {
         setTimeout(reflectMute, 60);
     });
     (el.querySelector(".sw-fs") as HTMLElement).addEventListener("click", () => toggleWinFullscreen(win));
-    win.addEventListener("dblclick", (e: any) => {
-        if (!el.contains(e.target)) toggleWinFullscreen(win);
-    });
+
+    // The popout is a React app that can wipe body children, so overlayTick
+    // re-mounts. Bind the window-level listener once per window, not per mount,
+    // or repeat mounts stack listeners and each dblclick toggles N times.
+    if (!win.__swDblBound) {
+        win.__swDblBound = true;
+        win.addEventListener("dblclick", (e: any) => {
+            const bar = win.document?.getElementById(OVERLAY_ID);
+            if (!bar || !bar.contains(e.target)) toggleWinFullscreen(win);
+        });
+    }
 }
 
 const STREAM_KEY_RE = /^DISCORD_CALL_TILE_POPOUT_\d+_((?:guild|call):.+)$/;
