@@ -52,13 +52,97 @@ function setStreamVolume(streamKey: string, v: number) {
     catch (e: any) { log("setLocalVolume threw", e?.message); }
 }
 
+function popoutWindow(windowKey: string): any {
+    try { return PWS()?.getWindow?.(windowKey); } catch { return null; }
+}
+
+function toggleWinFullscreen(win: any) {
+    try {
+        const d = win?.document;
+        if (!d) return;
+        if (d.fullscreenElement) d.exitFullscreen?.();
+        else d.documentElement?.requestFullscreen?.().catch((e: any) => log("requestFullscreen rejected", e?.message));
+    } catch (e: any) { log("toggleWinFullscreen threw", e?.message); }
+}
+
 function toggleFullscreen(windowKey: string) {
-    const cur = !!PWS()?.isWindowFullScreen?.(windowKey);
-    for (const type of ["POPOUT_WINDOW_SET_FULLSCREEN", "POPOUT_WINDOW_FULLSCREEN"]) {
-        try { FluxDispatcher.dispatch({ type, key: windowKey, fullscreen: !cur } as any); }
-        catch (e: any) { log(type, "threw", e?.message); }
+    toggleWinFullscreen(popoutWindow(windowKey));
+}
+
+// ---- in-window control overlay ------------------------------------------
+
+let overlayInterval: number | undefined;
+const OVERLAY_ID = "streamwindows-overlay";
+const OVERLAY_CSS = `
+#${OVERLAY_ID}{position:fixed;left:0;right:0;bottom:0;z-index:2147483647;display:flex;gap:10px;
+ align-items:center;padding:10px 14px 12px;color:#fff;font:13px/1 system-ui,sans-serif;
+ background:linear-gradient(transparent,rgba(0,0,0,.55));opacity:0;transition:opacity .15s;
+ -webkit-app-region:no-drag}
+html:hover #${OVERLAY_ID}{opacity:1}
+#${OVERLAY_ID} input[type=range]{flex:1;min-width:80px;accent-color:#5865f2;cursor:pointer}
+#${OVERLAY_ID} .sw-val{width:38px;text-align:right;opacity:.85;font-variant-numeric:tabular-nums}
+#${OVERLAY_ID} button{background:#ffffff22;border:0;color:#fff;padding:6px 9px;border-radius:6px;
+ cursor:pointer;font:13px/1 system-ui}
+#${OVERLAY_ID} button:hover{background:#ffffff38}
+`;
+
+function mountOverlay(win: any, streamKey: string) {
+    const doc = win?.document;
+    if (!doc?.body || doc.getElementById(OVERLAY_ID)) return;
+
+    if (!doc.getElementById(OVERLAY_ID + "-css")) {
+        const style = doc.createElement("style");
+        style.id = OVERLAY_ID + "-css";
+        style.textContent = OVERLAY_CSS;
+        (doc.head ?? doc.documentElement).appendChild(style);
     }
-    log("fullscreen", windowKey, "->", !cur, "(now", PWS()?.isWindowFullScreen?.(windowKey), ")");
+
+    const vol = Math.round(getStreamVolume(streamKey));
+    const bar = doc.createElement("div");
+    bar.id = OVERLAY_ID;
+    bar.innerHTML =
+        `<span>🔊</span>` +
+        `<input type="range" min="0" max="200" step="1" value="${vol}">` +
+        `<span class="sw-val">${vol}%</span>` +
+        `<button class="sw-fs" title="Fullscreen (or double-click)">⛶</button>`;
+    doc.body.appendChild(bar);
+
+    const range = bar.querySelector("input") as HTMLInputElement;
+    const valEl = bar.querySelector(".sw-val") as HTMLElement;
+    range.addEventListener("input", () => {
+        const v = +range.value;
+        setStreamVolume(streamKey, v);
+        valEl.textContent = Math.round(v) + "%";
+    });
+    (bar.querySelector(".sw-fs") as HTMLElement).addEventListener("click", () => toggleWinFullscreen(win));
+    win.addEventListener("dblclick", (e: any) => {
+        if (!bar.contains(e.target)) toggleWinFullscreen(win);
+    });
+}
+
+const STREAM_KEY_RE = /^DISCORD_CALL_TILE_POPOUT_\d+_((?:guild|call):.+)$/;
+
+/** keep an overlay mounted in every open stream popout */
+function overlayTick() {
+    const keys: string[] = PWS()?.getWindowKeys?.() ?? [];
+    for (const k of keys) {
+        const m = STREAM_KEY_RE.exec(k);
+        if (!m) continue;
+        const win = popoutWindow(k);
+        if (win?.document?.body && !win.document.getElementById(OVERLAY_ID)) {
+            try { mountOverlay(win, m[1]); } catch (e: any) { log("mountOverlay threw", e?.message); }
+        }
+    }
+}
+
+function removeAllOverlays() {
+    for (const k of (PWS()?.getWindowKeys?.() ?? [])) {
+        try {
+            const doc = popoutWindow(k)?.document;
+            doc?.getElementById(OVERLAY_ID)?.remove();
+            doc?.getElementById(OVERLAY_ID + "-css")?.remove();
+        } catch { /* window gone */ }
+    }
 }
 
 const streamKeyString = (s: any) =>
@@ -133,6 +217,7 @@ function popOut(channelId: string, userId: string) {
         log("openCallTilePopout(", channelId, ",", participantId, ")");
         P.openCallTilePopout(channelId, participantId);
         setTimeout(dumpKeys, 800);
+        for (const d of [400, 900, 1600, 2600]) setTimeout(overlayTick, d);
     }, 1300);
 }
 
@@ -298,24 +383,23 @@ export default definePlugin({
     ],
     start() {
         addContextMenuPatch(NAV_IDS, patch);
+        overlayInterval = window.setInterval(overlayTick, 1500);
         (window as any).$sw = {
             popOut, popAllInConnectedChannel, setAlwaysOnTop, closeFor, closeAll,
-            dumpKeys, discover,
+            dumpKeys, discover, overlayTick, toggleFullscreen,
             getPopout, ASS, PWS, VSS, watchStreamFn, SelectParticipant, ensureWatching,
             connectedVoiceChannelId,
             streamStateFor: (userId: string) => {
                 const s = streamForUser(userId);
                 return s ? streamState(streamKeyString(s)) : "no stream";
-            },
-            components: {
-                streamIdOnReady: () => findComponentByCode("streamId", "onReady"),
-                videoStream: () => findComponentByCode("VideoStream")
             }
         };
         log("ready — right-click a streamer in voice, or /streamwindows");
     },
     stop() {
         removeContextMenuPatch(NAV_IDS, patch);
+        if (overlayInterval) window.clearInterval(overlayInterval);
+        removeAllOverlays();
         delete (window as any).$sw;
     }
 });
