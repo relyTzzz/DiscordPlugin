@@ -221,6 +221,16 @@ function discover() {
     const P: any = getPopout();
     log("popout module methods:", P && Object.keys(P).join(","));
 
+    // can we reach a popout window's document to inject an overlay?
+    const keys: string[] = PWS()?.getWindowKeys?.() ?? [];
+    log("open popout keys:", keys);
+    for (const k of keys) {
+        try {
+            const w: any = PWS()?.getWindow?.(k);
+            log(`getWindow(${k}) →`, w && Object.keys(w), "| has document:", !!w?.document, "| has window:", !!w?.window);
+        } catch (e: any) { log(`getWindow(${k}) threw`, e?.message); }
+    }
+
     dumpKeys();
 }
 
@@ -264,21 +274,6 @@ const patch: NavContextMenuPatchCallback = (children, props: any) => {
                     action={() => closeFor(channelId, user.id)}
                 />
             )}
-            <Menu.MenuControlItem
-                id="streamwindows-volume"
-                label="Stream Volume"
-                control={(cprops: any, ref: any) => (
-                    <Menu.MenuSliderControl
-                        ref={ref}
-                        {...cprops}
-                        minValue={0}
-                        maxValue={200}
-                        value={getStreamVolume(streamKey)}
-                        onChange={(v: number) => setStreamVolume(streamKey, v)}
-                        renderValue={(v: number) => `${Math.round(v)}%`}
-                    />
-                )}
-            />
         </Menu.MenuGroup>
     );
 };
