@@ -1,0 +1,13 @@
+{
+  "name": "streamwindows",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Vencord user plugin: pop each watched Discord stream into its own OS window for multi-monitor viewing.",
+  "type": "module",
+  "scripts": {
+    "link": "node scripts/link-into-vencord.mjs",
+    "unlink": "node scripts/link-into-vencord.mjs --remove"
+  },
+  "author": "theta",
+  "license": "GPL-3.0-or-later"
+}
