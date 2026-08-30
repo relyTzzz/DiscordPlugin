@@ -59,16 +59,13 @@ function getStreamVolume(streamKey: string): number {
 function setStreamVolume(streamKey: string, v: number) {
     const VA = VolumeActions();
     const owner = ownerFromKey(streamKey);
-    const before = readVol(streamKey);
-    try { VA?.setLocalVolume?.(streamKey, v, STREAM_CTX); }
-    catch (e: any) { log("setLocalVolume(key) threw", e?.message); }
-    // if addressing by stream key doesn't take, Discord keys stream volume by owner id
-    setTimeout(() => {
-        if (readVol(streamKey) === before) {
-            try { VA?.setLocalVolume?.(owner, v, STREAM_CTX); }
-            catch (e: any) { log("setLocalVolume(owner) threw", e?.message); }
-        }
-    }, 120);
+    for (const id of [streamKey, owner]) {
+        try { VA?.setLocalVolume?.(id, v, STREAM_CTX); }
+        catch (e: any) { log("setLocalVolume", id, "threw", e?.message); }
+        try { FluxDispatcher.dispatch({ type: "AUDIO_SET_LOCAL_VOLUME", context: STREAM_CTX, userId: id, volume: v } as any); }
+        catch (e: any) { log("AUDIO_SET_LOCAL_VOLUME", id, "threw", e?.message); }
+    }
+    log("vol set", v, "→ reads key:", readVol(streamKey), "owner:", readVol(owner));
 }
 
 function isStreamMuted(streamKey: string): boolean {
@@ -341,6 +338,23 @@ function discover() {
 
     const s0 = (ASS()?.getAllApplicationStreams?.() ?? [])[0];
     log("sample stream obj:", s0, "keys:", s0 && Object.keys(s0));
+
+    // native stream-volume slider call site
+    log("--- volume call sites ---");
+    for (const codes of [
+        ["setStreamAttenuation"], ["STREAM_ATTENUATION", "setLocalVolume"],
+        ["setLocalVolume", "GO_LIVE_STREAM"], ["setLocalVolume", "stream"],
+        ["#{intl::STREAM_VOLUME}"], ["USER_VOLUME", "setLocalVolume"],
+    ] as string[][]) {
+        try {
+            const m: any = findByCode(...codes);
+            log(JSON.stringify(codes), "→", m ? "HIT" : "null");
+            if (m) log("   " + String(typeof m === "function" ? m : (m.render ?? m.type ?? m)).slice(0, 1600));
+        } catch (e: any) { log(JSON.stringify(codes), "threw", e?.message); }
+    }
+    const ctxE = find((m: any) => m && typeof m === "object" && m.DEFAULT === "default"
+        && Object.values(m).some((x: any) => x === "stream" || /stream/i.test(String(x))));
+    log("media context enum:", ctxE);
 
     // volume
     const VA = VolumeActions();
