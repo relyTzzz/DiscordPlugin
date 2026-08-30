@@ -18,8 +18,8 @@
 
 import { addContextMenuPatch, NavContextMenuPatchCallback, removeContextMenuPatch } from "@api/ContextMenu";
 import definePlugin from "@utils/types";
-import { findByProps, findComponentByCode, findStore } from "@webpack";
-import { Menu } from "@webpack/common";
+import { findByCode, findByProps, findComponentByCode, findStore } from "@webpack";
+import { FluxDispatcher, Menu } from "@webpack/common";
 
 const TAG = "%c[StreamWindows]";
 const CSS = "color:#5865F2;font-weight:bold";
@@ -34,7 +34,23 @@ const VSS = () => findStore("VoiceStateStore") as any;
 const SelectedChannel = () => findByProps("getVoiceChannelId", "getChannelId") as any;
 const StreamActions = () =>
     (findByProps("watchStream", "stopWatchingStream")
-        ?? findByProps("watchStream")) as any;
+        ?? findByProps("watchStream")
+        ?? findByProps("stopWatchingStream")
+        ?? findByProps("setStreamSourcePaused", "watchStream")
+        ?? findByCode("STREAM_WATCH", "streamKey")
+        ?? findByCode('"STREAM_WATCH"')) as any;
+
+/** Ask Discord to start decoding a stream so the participant gets a streamId. */
+function watchStream(streamKey: string) {
+    const SA = StreamActions();
+    if (SA?.watchStream) {
+        log("SA.watchStream(", streamKey, ")");
+        try { SA.watchStream(streamKey); return; } catch (e: any) { log("SA.watchStream threw", e?.message); }
+    }
+    log("dispatch STREAM_WATCH", streamKey);
+    try { FluxDispatcher.dispatch({ type: "STREAM_WATCH", streamKey } as any); }
+    catch (e: any) { log("STREAM_WATCH dispatch threw", e?.message); }
+}
 
 function connectedVoiceChannelId(): string | undefined {
     try { return SelectedChannel()?.getVoiceChannelId?.() ?? undefined; } catch { return undefined; }
@@ -72,21 +88,15 @@ function popOut(channelId: string, userId: string) {
     if (already) { log("already open:", already); return; }
 
     const stream = streamForUser(userId);
-    const SA = StreamActions();
-    if (stream && SA?.watchStream) {
-        const key = streamKeyFor(stream, channelId, userId);
-        log("watchStream(", key, ")");
-        try { SA.watchStream(key); } catch (e: any) { log("watchStream threw", e?.message); }
-    } else {
-        log("no watchStream action / no stream object — popping anyway", { hasStream: !!stream, hasSA: !!SA });
-    }
+    const key = streamKeyFor(stream, channelId, userId);
+    watchStream(key);
 
     // give the media engine a beat to assign a streamId before the tile mounts
     setTimeout(() => {
-        log("openCallTilePopout(", channelId, ",", userId, ")");
+        log("openCallTilePopout(", channelId, ",", userId, ")  streamKey was", key);
         P.openCallTilePopout(channelId, userId);
         setTimeout(dumpKeys, 800);
-    }, 350);
+    }, 600);
 }
 
 function popAllInConnectedChannel() {
@@ -122,11 +132,29 @@ function closeAll() {
 
 function discover() {
     log("=== discovery ===");
-    const SA = StreamActions();
-    log("StreamActions:", SA ? Object.keys(SA).join(", ") : "NOT FOUND");
-    if (SA?.watchStream) log("watchStream src:", String(SA.watchStream).slice(0, 800));
+
+    const probes: Array<[string, () => any]> = [
+        ['findByProps("watchStream")', () => findByProps("watchStream")],
+        ['findByProps("watchStream","stopWatchingStream")', () => findByProps("watchStream", "stopWatchingStream")],
+        ['findByProps("stopWatchingStream")', () => findByProps("stopWatchingStream")],
+        ['findByProps("setStreamSourcePaused")', () => findByProps("setStreamSourcePaused")],
+        ['findByProps("watchStream","setStreamSourcePaused")', () => findByProps("watchStream", "setStreamSourcePaused")],
+        ['findByCode("STREAM_WATCH","streamKey")', () => findByCode("STREAM_WATCH", "streamKey")],
+        ['findByCode(\'"STREAM_WATCH"\')', () => findByCode('"STREAM_WATCH"')],
+        ['findByCode("stopWatchingStream")', () => findByCode("stopWatchingStream")],
+    ];
+    for (const [label, fn] of probes) {
+        try {
+            const r: any = fn();
+            log(label, "→", r ? (typeof r === "function" ? "fn " + (r.name || "") : Object.keys(r).slice(0, 30).join(",")) : "null");
+            if (r && typeof r === "object" && r.watchStream) log("   watchStream src:", String(r.watchStream).slice(0, 600));
+            if (typeof r === "function") log("   src:", String(r).slice(0, 600));
+        } catch (e: any) { log(label, "threw", e?.message); }
+    }
+
     const s0 = (ASS()?.getAllApplicationStreams?.() ?? [])[0];
-    log("sample stream obj:", s0, "String():", s0 && String(s0));
+    log("sample stream obj:", s0, "keys:", s0 && Object.keys(s0));
+    log("ASS methods:", ASS() && Object.getOwnPropertyNames(Object.getPrototypeOf(ASS())).join(","));
     dumpKeys();
 }
 
