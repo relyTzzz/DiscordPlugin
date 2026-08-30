@@ -41,15 +41,52 @@ const VolumeActions = () => findByProps("setLocalVolume") as any;
 // context passed to get/setLocalVolume for Go Live stream audio (vs "default" voice)
 const STREAM_CTX = "stream";
 
-function getStreamVolume(streamKey: string): number {
+const ownerFromKey = (streamKey: string) => streamKey.split(":").pop() as string;
+
+function readVol(id: string): number | undefined {
     try {
-        const v = MediaEngineStore()?.getLocalVolume?.(streamKey, STREAM_CTX);
-        return typeof v === "number" ? v : 100;
-    } catch { return 100; }
+        const v = MediaEngineStore()?.getLocalVolume?.(id, STREAM_CTX);
+        return typeof v === "number" ? v : undefined;
+    } catch { return undefined; }
 }
+
+function getStreamVolume(streamKey: string): number {
+    const byKey = readVol(streamKey);
+    const byOwner = readVol(ownerFromKey(streamKey));
+    return byKey ?? byOwner ?? 100;
+}
+
 function setStreamVolume(streamKey: string, v: number) {
-    try { VolumeActions()?.setLocalVolume?.(streamKey, v, STREAM_CTX); }
-    catch (e: any) { log("setLocalVolume threw", e?.message); }
+    const VA = VolumeActions();
+    const owner = ownerFromKey(streamKey);
+    const before = readVol(streamKey);
+    try { VA?.setLocalVolume?.(streamKey, v, STREAM_CTX); }
+    catch (e: any) { log("setLocalVolume(key) threw", e?.message); }
+    // if addressing by stream key doesn't take, Discord keys stream volume by owner id
+    setTimeout(() => {
+        if (readVol(streamKey) === before) {
+            try { VA?.setLocalVolume?.(owner, v, STREAM_CTX); }
+            catch (e: any) { log("setLocalVolume(owner) threw", e?.message); }
+        }
+    }, 120);
+}
+
+function isStreamMuted(streamKey: string): boolean {
+    const mes = MediaEngineStore();
+    try {
+        return !!(mes?.isLocalMute?.(streamKey, STREAM_CTX) || mes?.isLocalMute?.(ownerFromKey(streamKey), STREAM_CTX));
+    } catch { return false; }
+}
+function toggleStreamMute(streamKey: string): boolean {
+    const VA = VolumeActions();
+    const wasMuted = isStreamMuted(streamKey);
+    for (const id of [streamKey, ownerFromKey(streamKey)]) {
+        try {
+            if (VA?.setLocalMute) VA.setLocalMute(id, !wasMuted, STREAM_CTX);
+            else VA?.toggleLocalMute?.(id, STREAM_CTX);
+        } catch (e: any) { log("mute toggle threw", id, e?.message); }
+    }
+    return !wasMuted;
 }
 
 function popoutWindow(windowKey: string): any {
@@ -57,6 +94,12 @@ function popoutWindow(windowKey: string): any {
 }
 
 function toggleWinFullscreen(win: any) {
+    try {
+        // real Electron window fullscreen — covers the popout's own titlebar
+        const dn = win?.DiscordNative?.window;
+        if (dn?.fullscreen) { dn.fullscreen(); return; }
+        if (dn?.setFullscreen) { win.__swFs = !win.__swFs; dn.setFullscreen(win.__swFs); return; }
+    } catch (e: any) { log("DiscordNative fullscreen threw", e?.message); }
     try {
         const d = win?.document;
         if (!d) return;
@@ -74,16 +117,22 @@ function toggleFullscreen(windowKey: string) {
 let overlayInterval: number | undefined;
 const OVERLAY_ID = "streamwindows-overlay";
 const OVERLAY_CSS = `
-#${OVERLAY_ID}{position:fixed;left:0;right:0;bottom:0;z-index:2147483647;display:flex;gap:10px;
- align-items:center;padding:10px 14px 12px;color:#fff;font:13px/1 system-ui,sans-serif;
- background:linear-gradient(transparent,rgba(0,0,0,.55));opacity:0;transition:opacity .15s;
+#${OVERLAY_ID}{position:fixed;left:10px;bottom:10px;z-index:2147483647;display:flex;flex-direction:column;
+ align-items:center;gap:6px;opacity:0;transition:opacity .12s;font:12px system-ui,sans-serif;color:#fff;
  -webkit-app-region:no-drag}
-html:hover #${OVERLAY_ID}{opacity:1}
-#${OVERLAY_ID} input[type=range]{flex:1;min-width:80px;accent-color:#5865f2;cursor:pointer}
-#${OVERLAY_ID} .sw-val{width:38px;text-align:right;opacity:.85;font-variant-numeric:tabular-nums}
-#${OVERLAY_ID} button{background:#ffffff22;border:0;color:#fff;padding:6px 9px;border-radius:6px;
- cursor:pointer;font:13px/1 system-ui}
-#${OVERLAY_ID} button:hover{background:#ffffff38}
+html:hover #${OVERLAY_ID}{opacity:.95}
+#${OVERLAY_ID} .sw-pop{display:none;flex-direction:column;align-items:center;gap:4px;padding:8px 6px 6px;
+ border-radius:9px;background:rgba(0,0,0,.72)}
+#${OVERLAY_ID}:hover .sw-pop,#${OVERLAY_ID}.sw-open .sw-pop{display:flex}
+#${OVERLAY_ID} input[type=range]{writing-mode:vertical-lr;direction:rtl;width:20px;height:92px;
+ accent-color:#5865f2;cursor:pointer}
+#${OVERLAY_ID} .sw-val{opacity:.8;font-variant-numeric:tabular-nums}
+#${OVERLAY_ID} .sw-btns{display:flex;gap:6px}
+#${OVERLAY_ID} button{width:30px;height:30px;border:0;border-radius:8px;background:rgba(0,0,0,.6);
+ color:#fff;cursor:pointer;font-size:14px;line-height:1}
+#${OVERLAY_ID} button:hover{background:rgba(0,0,0,.85)}
+#${OVERLAY_ID} button.sw-on{background:#5865f2}
+:fullscreen [class*="titleBar"],:fullscreen [class*="typeWindows"],:fullscreen [class*="titlebar"]{display:none!important}
 `;
 
 function mountOverlay(win: any, streamKey: string) {
@@ -98,25 +147,41 @@ function mountOverlay(win: any, streamKey: string) {
     }
 
     const vol = Math.round(getStreamVolume(streamKey));
-    const bar = doc.createElement("div");
-    bar.id = OVERLAY_ID;
-    bar.innerHTML =
-        `<span>🔊</span>` +
-        `<input type="range" min="0" max="200" step="1" value="${vol}">` +
-        `<span class="sw-val">${vol}%</span>` +
-        `<button class="sw-fs" title="Fullscreen (or double-click)">⛶</button>`;
-    doc.body.appendChild(bar);
+    const el = doc.createElement("div");
+    el.id = OVERLAY_ID;
+    el.innerHTML =
+        `<div class="sw-pop">` +
+            `<input type="range" min="0" max="200" step="1" value="${vol}">` +
+            `<span class="sw-val">${vol}%</span>` +
+        `</div>` +
+        `<div class="sw-btns">` +
+            `<button class="sw-vol" title="Volume">🔊</button>` +
+            `<button class="sw-fs" title="Fullscreen (or double-click video)">⛶</button>` +
+        `</div>`;
+    doc.body.appendChild(el);
 
-    const range = bar.querySelector("input") as HTMLInputElement;
-    const valEl = bar.querySelector(".sw-val") as HTMLElement;
+    const range = el.querySelector("input") as HTMLInputElement;
+    const valEl = el.querySelector(".sw-val") as HTMLElement;
+    const volBtn = el.querySelector(".sw-vol") as HTMLElement;
+    const reflectMute = () => {
+        const muted = isStreamMuted(streamKey);
+        volBtn.textContent = muted ? "🔇" : "🔊";
+        volBtn.classList.toggle("sw-on", muted);
+    };
+    reflectMute();
+
     range.addEventListener("input", () => {
         const v = +range.value;
         setStreamVolume(streamKey, v);
         valEl.textContent = Math.round(v) + "%";
     });
-    (bar.querySelector(".sw-fs") as HTMLElement).addEventListener("click", () => toggleWinFullscreen(win));
+    volBtn.addEventListener("click", () => {
+        toggleStreamMute(streamKey);
+        setTimeout(reflectMute, 60);
+    });
+    (el.querySelector(".sw-fs") as HTMLElement).addEventListener("click", () => toggleWinFullscreen(win));
     win.addEventListener("dblclick", (e: any) => {
-        if (!bar.contains(e.target)) toggleWinFullscreen(win);
+        if (!el.contains(e.target)) toggleWinFullscreen(win);
     });
 }
 
