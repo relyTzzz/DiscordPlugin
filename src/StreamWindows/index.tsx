@@ -32,24 +32,27 @@ const ASS = () => findStore("ApplicationStreamingStore") as any;
 const PWS = () => findStore("PopoutWindowStore") as any;
 const VSS = () => findStore("VoiceStateStore") as any;
 const SelectedChannel = () => findByProps("getVoiceChannelId", "getChannelId") as any;
-const StreamActions = () =>
-    (findByProps("watchStream", "stopWatchingStream")
-        ?? findByProps("watchStream")
-        ?? findByProps("stopWatchingStream")
-        ?? findByProps("setStreamSourcePaused", "watchStream")
-        ?? findByCode("STREAM_WATCH", "streamKey")
-        ?? findByCode('"STREAM_WATCH"')) as any;
+/** Discord's "watch this stream" thunk: v(streamDescriptor, opts) -> dispatch STREAM_WATCH. */
+const watchStreamFn = () => findByCode("STREAM_WATCH", "streamKey") as any;
 
-/** Ask Discord to start decoding a stream so the participant gets a streamId. */
-function watchStream(streamKey: string) {
-    const SA = StreamActions();
-    if (SA?.watchStream) {
-        log("SA.watchStream(", streamKey, ")");
-        try { SA.watchStream(streamKey); return; } catch (e: any) { log("SA.watchStream threw", e?.message); }
+const streamKeyString = (s: any) =>
+    s?.streamType === "call"
+        ? `call:${s.channelId}:${s.ownerId}`
+        : `guild:${s.guildId}:${s.channelId}:${s.ownerId}`;
+
+/**
+ * Ensure `stream` is in the current watch set (multistream) WITHOUT replacing it
+ * or stealing focus, so the participant gets a decoded feed / streamId.
+ */
+function ensureWatching(stream: any) {
+    const fn = watchStreamFn();
+    if (typeof fn === "function") {
+        try { fn(stream, { forceMultiple: true, noFocus: true }); return; }
+        catch (e: any) { log("watch thunk threw", e?.message); }
     }
-    log("dispatch STREAM_WATCH", streamKey);
-    try { FluxDispatcher.dispatch({ type: "STREAM_WATCH", streamKey } as any); }
-    catch (e: any) { log("STREAM_WATCH dispatch threw", e?.message); }
+    try {
+        FluxDispatcher.dispatch({ type: "STREAM_WATCH", streamKey: streamKeyString(stream), allowMultiple: true } as any);
+    } catch (e: any) { log("STREAM_WATCH dispatch threw", e?.message); }
 }
 
 function connectedVoiceChannelId(): string | undefined {
@@ -60,19 +63,6 @@ function connectedVoiceChannelId(): string | undefined {
 function streamForUser(userId: string): any {
     const s = ASS();
     return s?.getAnyStreamForUser?.(userId) ?? s?.getStreamForUser?.(userId) ?? null;
-}
-
-/** build "guild:g:c:u" / "call:c:u" from a stream object (or its own toString) */
-function streamKeyFor(stream: any, channelId: string, userId: string): string {
-    if (stream && typeof stream === "object") {
-        const asStr = String(stream);
-        if (/^(guild|call):/.test(asStr)) return asStr;
-        if (stream.streamType === "guild" && stream.guildId)
-            return `guild:${stream.guildId}:${stream.channelId ?? channelId}:${stream.ownerId ?? userId}`;
-        if (stream.streamType === "call")
-            return `call:${stream.channelId ?? channelId}:${stream.ownerId ?? userId}`;
-    }
-    return `guild:0:${channelId}:${userId}`;
 }
 
 function existingWindowKey(channelId: string, userId: string): string | undefined {
@@ -88,12 +78,16 @@ function popOut(channelId: string, userId: string) {
     if (already) { log("already open:", already); return; }
 
     const stream = streamForUser(userId);
-    const key = streamKeyFor(stream, channelId, userId);
-    watchStream(key);
+    if (stream) {
+        log("ensureWatching", streamKeyString(stream));
+        ensureWatching(stream);
+    } else {
+        log("no stream object for", userId, "— popping anyway");
+    }
 
     // give the media engine a beat to assign a streamId before the tile mounts
     setTimeout(() => {
-        log("openCallTilePopout(", channelId, ",", userId, ")  streamKey was", key);
+        log("openCallTilePopout(", channelId, ",", userId, ")");
         P.openCallTilePopout(channelId, userId);
         setTimeout(dumpKeys, 800);
     }, 600);
@@ -214,7 +208,7 @@ export default definePlugin({
         (window as any).$sw = {
             popOut, popAllInConnectedChannel, setAlwaysOnTop, closeFor, closeAll,
             dumpKeys, discover,
-            getPopout, ASS, PWS, VSS, StreamActions, connectedVoiceChannelId,
+            getPopout, ASS, PWS, VSS, watchStreamFn, ensureWatching, connectedVoiceChannelId,
             components: {
                 streamIdOnReady: () => findComponentByCode("streamId", "onReady"),
                 videoStream: () => findComponentByCode("VideoStream")
