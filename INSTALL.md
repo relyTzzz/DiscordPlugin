@@ -45,54 +45,6 @@ Done.
 
 ---
 
-## How to use it
-
-1. Join a voice channel where someone is streaming.
-2. **Right-click the person who's streaming** — either their name in the voice
-   channel list, or their video tile.
-3. Choose **"Pop Out Stream to Window"**.
-
-Their stream opens in its own window. Drag it wherever you like — another
-monitor, off to the side, whatever.
-
-**Repeat for each person** you want to watch. Each one gets its own window.
-
-### Controls inside each window
-
-Move your mouse over the window and controls fade in at the **bottom-left**:
-
-| | |
-|---|---|
-| 🔊 | Click to **mute/unmute** that stream |
-| | **Hover** the buttons for a **volume slider** |
-| ⛶ | **Fullscreen** — or just **double-click the video** |
-
-Right-clicking the streamer again gives you **Toggle Fullscreen** and
-**Close Stream Window**.
-
----
-
-## If something goes wrong
-
-**The right-click menu doesn't show "Pop Out Stream to Window"**
-- Are you actually *in* the voice channel? You have to be connected, not just
-  looking at it.
-- Is that person actually streaming right now?
-- Check Settings → Plugins and confirm StreamWindows is toggled on.
-
-**The window opens but shows their avatar instead of the stream**
-- Give it a few seconds — it has to start the video first.
-- If it stays as an avatar, close the window and try again.
-
-**The plugin vanished after a Discord update**
-- Discord updates sometimes undo BetterDiscord. Re-run the BetterDiscord
-  installer; your plugin file is still there and will come back.
-
-**Discord won't start after installing BetterDiscord**
-- Run the BetterDiscord installer again and choose **Repair**.
-
----
-
 ## Updating
 
 There's no auto-update. When you're sent a newer `StreamWindows.plugin.js`, drop

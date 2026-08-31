@@ -28,6 +28,21 @@ html:hover #${OVERLAY_ID}{opacity:.95}
  color:#fff;cursor:pointer;font-size:14px;line-height:1}
 #${OVERLAY_ID} button:hover{background:rgba(0,0,0,.85)}
 #${OVERLAY_ID} button.sw-on{background:#5865f2}
+/* Hide the popout's own title bar so the video runs edge to edge. It is lifted
+   out of flow (position:fixed) rather than display:none'd, because Discord puts
+   -webkit-app-region:drag on it \u2014 display:none would make the window
+   undraggable. Hovering the top strip fades the window buttons back in,
+   semi-transparent; hovering a button itself brings it to full opacity. */
+[class*="titleBar"]{
+ position:fixed!important;top:0;left:0;right:0;height:26px;z-index:2147483646;
+ background:transparent!important;border:0!important;box-shadow:none!important;
+ opacity:0;transition:opacity .15s;-webkit-app-region:drag}
+[class*="titleBar"]:hover{opacity:.55}
+/* the title text / wordmark never comes back, only the controls */
+[class*="titleBar"] [class*="wordmark"],[class*="titleBar"] [class*="title_"]{display:none!important}
+[class*="winButtons"]{-webkit-app-region:no-drag}
+[class*="winButton"]:hover{opacity:1!important;background:rgba(255,255,255,.15)!important}
+/* fullscreen hides the bar outright */
 :fullscreen [class*="titleBar"],:fullscreen [class*="typeWindows"],:fullscreen [class*="titlebar"]{display:none!important}
 `;
 function createStreamWindows(P) {
@@ -290,6 +305,28 @@ function createStreamWindows(P) {
     }
     dumpKeys();
   }
+  function inspectChrome() {
+    for (const k of liveKeys()) {
+      const doc = windowFor(k)?.document;
+      if (!doc) continue;
+      log("window", k);
+      const seen = /* @__PURE__ */ new Set();
+      for (const el of Array.from(doc.querySelectorAll("*"))) {
+        const cls = typeof el.className === "string" ? el.className : "";
+        if (!/titlebar|titleBar|winButton|wordmark|typeWindows/i.test(cls)) continue;
+        if (seen.has(cls)) continue;
+        seen.add(cls);
+        const r = el.getBoundingClientRect?.();
+        log(
+          "  ",
+          el.tagName,
+          JSON.stringify(cls),
+          r ? `${Math.round(r.width)}x${Math.round(r.height)} @${Math.round(r.top)}` : ""
+        );
+      }
+      if (!seen.size) log("   (no titlebar-ish elements found)");
+    }
+  }
   function menuEntriesFor(props) {
     const user = props?.user;
     if (!user?.id) return [];
@@ -349,6 +386,7 @@ function createStreamWindows(P) {
       overlayTick,
       toggleFullscreen,
       ensureWatching,
+      inspectChrome,
       getVolume,
       setVolume,
       isMuted,

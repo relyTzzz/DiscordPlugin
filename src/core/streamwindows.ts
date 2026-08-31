@@ -50,6 +50,21 @@ html:hover #${OVERLAY_ID}{opacity:.95}
  color:#fff;cursor:pointer;font-size:14px;line-height:1}
 #${OVERLAY_ID} button:hover{background:rgba(0,0,0,.85)}
 #${OVERLAY_ID} button.sw-on{background:#5865f2}
+/* Hide the popout's own title bar so the video runs edge to edge. It is lifted
+   out of flow (position:fixed) rather than display:none'd, because Discord puts
+   -webkit-app-region:drag on it — display:none would make the window
+   undraggable. Hovering the top strip fades the window buttons back in,
+   semi-transparent; hovering a button itself brings it to full opacity. */
+[class*="titleBar"]{
+ position:fixed!important;top:0;left:0;right:0;height:26px;z-index:2147483646;
+ background:transparent!important;border:0!important;box-shadow:none!important;
+ opacity:0;transition:opacity .15s;-webkit-app-region:drag}
+[class*="titleBar"]:hover{opacity:.55}
+/* the title text / wordmark never comes back, only the controls */
+[class*="titleBar"] [class*="wordmark"],[class*="titleBar"] [class*="title_"]{display:none!important}
+[class*="winButtons"]{-webkit-app-region:no-drag}
+[class*="winButton"]:hover{opacity:1!important;background:rgba(255,255,255,.15)!important}
+/* fullscreen hides the bar outright */
 :fullscreen [class*="titleBar"],:fullscreen [class*="typeWindows"],:fullscreen [class*="titlebar"]{display:none!important}
 `;
 
@@ -353,6 +368,30 @@ export function createStreamWindows(P: Platform): StreamWindows {
         dumpKeys();
     }
 
+    /**
+     * Dump the popout's own window chrome. Discord's class names are hashed per
+     * build, so if the titlebar CSS above stops matching, run this and adjust the
+     * [class*="..."] selectors to whatever it prints.
+     */
+    function inspectChrome() {
+        for (const k of liveKeys()) {
+            const doc = windowFor(k)?.document;
+            if (!doc) continue;
+            log("window", k);
+            const seen = new Set<string>();
+            for (const el of Array.from(doc.querySelectorAll("*")) as any[]) {
+                const cls = typeof el.className === "string" ? el.className : "";
+                if (!/titlebar|titleBar|winButton|wordmark|typeWindows/i.test(cls)) continue;
+                if (seen.has(cls)) continue;
+                seen.add(cls);
+                const r = el.getBoundingClientRect?.();
+                log("  ", el.tagName, JSON.stringify(cls),
+                    r ? `${Math.round(r.width)}x${Math.round(r.height)} @${Math.round(r.top)}` : "");
+            }
+            if (!seen.size) log("   (no titlebar-ish elements found)");
+        }
+    }
+
     // ---- context menu -------------------------------------------------------
     function menuEntriesFor(props: any): MenuEntry[] {
         const user = props?.user;
@@ -412,7 +451,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
         discover,
         debug: {
             popOut, popAllInConnectedChannel, closeAll, closeFor, setAlwaysOnTop,
-            dumpKeys, discover, overlayTick, toggleFullscreen, ensureWatching,
+            dumpKeys, discover, overlayTick, toggleFullscreen, ensureWatching, inspectChrome,
             getVolume, setVolume, isMuted, toggleMute,
             streamKeyOf, streamForUser, streamState, connectedVoiceChannelId,
             liveKeys, windowFor, existingWindowKey,
