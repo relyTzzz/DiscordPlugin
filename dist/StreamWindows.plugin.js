@@ -2,10 +2,9 @@
  * @name StreamWindows
  * @author theta
  * @description Pop each watched Discord stream into its own OS window for multi-monitor viewing.
- * @version 1.3.0
+ * @version 1.4.0
  * @source https://github.com/relyTzzz/StreamWindows
  * @website https://github.com/relyTzzz/StreamWindows#readme
- * @updateUrl https://raw.githubusercontent.com/relyTzzz/StreamWindows/main/StreamWindows.plugin.js
  */
 
 
@@ -518,83 +517,6 @@ function createStreamWindows(P) {
   };
 }
 
-// src/bd/self-update.ts
-var ADDON_NAME = "StreamWindows";
-var UI = () => BdApi.UI ?? BdApi;
-function parseVersion(src) {
-  const m = src.match(/@version\s+([0-9]+(?:\.[0-9]+)*(?:-[0-9A-Za-z.-]+)?)/);
-  return m ? m[1] : null;
-}
-function cmpVersion(a, b) {
-  const na = a.split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
-  const nb = b.split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(na.length, nb.length); i++) {
-    const d = (na[i] ?? 0) - (nb[i] ?? 0);
-    if (d) return d;
-  }
-  return 0;
-}
-async function fetchText(url) {
-  const net = BdApi?.Net?.fetch;
-  const res = net ? await net(url, { cache: "no-cache" }) : await fetch(url, { cache: "no-cache" });
-  if (res && res.ok === false) throw new Error(`HTTP ${res.status}`);
-  return await res.text();
-}
-function installedFile() {
-  const path = require("path");
-  const meta = BdApi?.Plugins?.get?.(ADDON_NAME) ?? {};
-  const folder = BdApi?.Plugins?.folder ?? path.join(process.env.APPDATA || "", "BetterDiscord", "plugins");
-  return path.join(folder, meta.filename || `${ADDON_NAME}.plugin.js`);
-}
-function makeSelfUpdater(log) {
-  let busy = false;
-  async function check({ silent = false } = {}) {
-    if (false) {
-      log("self-update disabled (no update URL in build)");
-      return;
-    }
-    if (busy) return;
-    busy = true;
-    try {
-      const remoteSrc = await fetchText("https://raw.githubusercontent.com/relyTzzz/StreamWindows/main/StreamWindows.plugin.js");
-      const remote = parseVersion(remoteSrc);
-      if (!remote) throw new Error("remote file has no @version");
-      const local = "1.3.0";
-      if (cmpVersion(remote, local) <= 0) {
-        log(`up to date (installed ${local}, remote ${remote})`);
-        if (!silent) UI().showToast?.(`StreamWindows is up to date (v${local})`, { type: "success" });
-        return;
-      }
-      log(`update available: ${local} -> ${remote}`);
-      UI().showConfirmationModal?.(
-        "StreamWindows update",
-        `Version ${remote} is available \u2014 you have ${local}. Update now?`,
-        {
-          confirmText: "Update",
-          cancelText: "Later",
-          onConfirm: () => {
-            try {
-              const dest = installedFile();
-              require("fs").writeFileSync(dest, remoteSrc);
-              log(`wrote ${dest}; BD will reload the plugin`);
-              UI().showToast?.(`StreamWindows updated to v${remote}`, { type: "success" });
-            } catch (e) {
-              log("update write failed", e?.message);
-              UI().showToast?.(`StreamWindows update failed: ${e?.message}`, { type: "error" });
-            }
-          }
-        }
-      );
-    } catch (e) {
-      log("update check failed", e?.message);
-      if (!silent) UI().showToast?.(`StreamWindows update check failed: ${e?.message}`, { type: "error" });
-    } finally {
-      busy = false;
-    }
-  }
-  return { check };
-}
-
 // src/bd/entry.ts
 var W = () => BdApi.Webpack;
 var F = () => BdApi.Webpack.Filters;
@@ -641,7 +563,6 @@ var platform = {
   }
 };
 var sw = createStreamWindows(platform);
-var updater = makeSelfUpdater(platform.log);
 var NAV_IDS = ["user-context", "stream-context"];
 function renderEntry(e) {
   return BdApi.ContextMenu.buildItem({
@@ -684,10 +605,7 @@ module.exports = class StreamWindows {
       if (typeof unpatch === "function") unpatchers.push(unpatch);
     }
     sw.start();
-    sw.debug.checkForUpdates = () => updater.check();
     window.$sw = sw.debug;
-    updater.check({ silent: true }).catch(() => {
-    });
   }
   stop() {
     while (unpatchers.length) {

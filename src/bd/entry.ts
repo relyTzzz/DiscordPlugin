@@ -10,7 +10,6 @@
 
 import { createStreamWindows } from "../core/streamwindows";
 import type { MenuEntry, Platform } from "../core/platform";
-import { makeSelfUpdater } from "./self-update";
 
 declare const BdApi: any;
 // BD evaluates plugin files as CommonJS and reads the plugin class off exports.
@@ -72,7 +71,6 @@ declare const require: (m: string) => any;
 declare const process: any;
 
 const sw = createStreamWindows(platform);
-const updater = makeSelfUpdater(platform.log);
 
 const NAV_IDS = ["user-context", "stream-context"];
 
@@ -125,12 +123,7 @@ module.exports = class StreamWindows {
         }
 
         sw.start();
-        sw.debug.checkForUpdates = () => updater.check();
         (window as any).$sw = sw.debug;
-
-        // Side-loaded BD plugins don't self-update; do it ourselves. Fire and
-        // forget — a failed check must never block start().
-        updater.check({ silent: true }).catch(() => { /* logged inside */ });
     }
 
     stop() {
