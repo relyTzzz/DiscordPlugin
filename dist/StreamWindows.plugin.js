@@ -10,8 +10,6 @@
 var DECODE_WAIT_MS = 1300;
 var OVERLAY_POLL_MS = 1500;
 var STREAM_CTX = "stream";
-var PIP_W = 480;
-var PIP_H = 270;
 var OVERLAY_ID = "streamwindows-overlay";
 var STREAM_KEY_RE = /^DISCORD_CALL_TILE_POPOUT_\d+_((?:guild|call):.+)$/;
 var OVERLAY_CSS = `
@@ -150,66 +148,6 @@ function createStreamWindows(P) {
     }
   }
   const toggleFullscreen = (windowKey) => toggleWinFullscreen(windowFor(windowKey));
-  function popoutVideo(win) {
-    try {
-      const vids = Array.from(win.document.querySelectorAll("video"));
-      return vids.filter((v) => v.srcObject).sort((x, y) => y.videoWidth * y.videoHeight - x.videoWidth * x.videoHeight)[0] ?? null;
-    } catch {
-      return null;
-    }
-  }
-  let hostPip = null;
-  const hostPipOpen = () => !!hostPip && !hostPip.closed;
-  function sourceVideoFor(windowKey) {
-    if (windowKey) {
-      const w = windowFor(windowKey);
-      const v = w && popoutVideo(w);
-      if (v) return v;
-    }
-    return popoutVideo(globalThis);
-  }
-  async function enterPip(streamKey, windowKey) {
-    if (hostPipOpen()) return log("a picture-in-picture window is already open");
-    const g = globalThis;
-    const dpip = g.documentPictureInPicture;
-    if (!dpip?.requestWindow) return log("documentPictureInPicture unavailable");
-    const src = sourceVideoFor(windowKey);
-    if (!src) return log("no decoding <video> found \u2014 pop the stream out (or watch it) first");
-    let pip;
-    try {
-      pip = await dpip.requestWindow({ width: PIP_W, height: PIP_H });
-    } catch (e) {
-      return log("requestWindow rejected:", e?.name, e?.message);
-    }
-    pip.document.body.style.cssText = "margin:0;background:#000;overflow:hidden";
-    const v = pip.document.createElement("video");
-    v.autoplay = true;
-    v.muted = true;
-    v.playsInline = true;
-    v.style.cssText = "width:100vw;height:100vh;object-fit:contain;background:#000";
-    v.srcObject = src.srcObject;
-    pip.document.body.appendChild(v);
-    v.play?.().catch((e) => log("pip video play() rejected:", e?.message));
-    hostPip = pip;
-    mountOverlay(pip, streamKey, windowKey ?? "");
-    pip.addEventListener("pagehide", () => {
-      hostPip = null;
-      log("pip closed by user");
-    });
-    log("pip open for", streamKey, "| source", src.videoWidth + "x" + src.videoHeight);
-  }
-  function exitPip() {
-    try {
-      hostPip?.close();
-    } catch {
-    }
-    hostPip = null;
-    log("pip closed");
-  }
-  function togglePip(streamKey, windowKey) {
-    if (hostPipOpen()) exitPip();
-    else void enterPip(streamKey, windowKey);
-  }
   function refreshOverlayState(win) {
     try {
       win?.__swRefresh?.();
@@ -228,24 +166,18 @@ function createStreamWindows(P) {
     const vol = Math.round(getVolume(streamKey));
     const el = doc.createElement("div");
     el.id = OVERLAY_ID;
-    el.innerHTML = `<div class="sw-pop"><input type="range" min="0" max="200" step="1" value="${vol}"><span class="sw-val">${vol}%</span></div><div class="sw-btns"><button class="sw-vol" title="Mute / volume"></button><button class="sw-pip" title="Picture-in-picture is started from the main window: right-click the streamer \u2192 Picture-in-Picture">\u{1F4CC}</button><button class="sw-fs" title="Fullscreen (or double-click video)">\u26F6</button></div>`;
+    el.innerHTML = `<div class="sw-pop"><input type="range" min="0" max="200" step="1" value="${vol}"><span class="sw-val">${vol}%</span></div><div class="sw-btns"><button class="sw-vol" title="Mute / volume"></button><button class="sw-fs" title="Fullscreen (or double-click video)">\u26F6</button></div>`;
     doc.body.appendChild(el);
     const range = el.querySelector("input");
     const valEl = el.querySelector(".sw-val");
     const volBtn = el.querySelector(".sw-vol");
-    const pipBtn = el.querySelector(".sw-pip");
     const reflectMute = () => {
       const muted = isMuted(streamKey);
       volBtn.textContent = muted ? "\u{1F507}" : "\u{1F50A}";
       volBtn.classList.toggle("sw-on", muted);
     };
-    const reflectPip = () => pipBtn.classList.toggle("sw-on", hostPipOpen());
     reflectMute();
-    reflectPip();
-    win.__swRefresh = () => {
-      reflectMute();
-      reflectPip();
-    };
+    win.__swRefresh = () => reflectMute();
     range.addEventListener("input", () => {
       const v = +range.value;
       setVolume(streamKey, v);
@@ -254,13 +186,6 @@ function createStreamWindows(P) {
     volBtn.addEventListener("click", () => {
       toggleMute(streamKey);
       setTimeout(reflectMute, 60);
-    });
-    pipBtn.addEventListener("click", () => {
-      log("Picture-in-picture must be started from the main window: right-click the streamer and choose Picture-in-Picture.");
-      pipBtn.textContent = "\u2197";
-      setTimeout(() => {
-        pipBtn.textContent = "\u{1F4CC}";
-      }, 1500);
     });
     el.querySelector(".sw-fs").addEventListener("click", () => toggleWinFullscreen(win));
     if (!win.__swDblBound) {
@@ -409,7 +334,7 @@ function createStreamWindows(P) {
       if (!seen.size) log("   (no titlebar-ish elements found)");
     }
   }
-  function pipDiag() {
+  function windowDiag() {
     const keys = liveKeys();
     if (!keys.length) return log("no popout windows open");
     for (const k of keys) {
@@ -438,7 +363,6 @@ function createStreamWindows(P) {
         "| full:",
         sc.width + "x" + sc.height
       );
-      log("   host pip open:", hostPipOpen());
       log("   alwaysTop  store:", (() => {
         try {
           return popoutStore()?.getIsAlwaysOnTop?.(k);
@@ -456,8 +380,6 @@ function createStreamWindows(P) {
         typeof win.process,
         "| electron:",
         typeof win.electron,
-        "| docPiP:",
-        typeof win.documentPictureInPicture,
         "| opener:",
         !!win.opener
       );
@@ -468,9 +390,7 @@ function createStreamWindows(P) {
         "| DiscordNative:",
         typeof g.DiscordNative,
         "| DN.window.setAlwaysOnTop:",
-        typeof g.DiscordNative?.window?.setAlwaysOnTop,
-        "| docPiP:",
-        typeof g.documentPictureInPicture
+        typeof g.DiscordNative?.window?.setAlwaysOnTop
       );
       try {
         const el = typeof g.require === "function" ? g.require("electron") : null;
@@ -497,11 +417,6 @@ function createStreamWindows(P) {
       action: () => popOut(channelId, user.id)
     }];
     if (winKey) {
-      entries.push({
-        id: "streamwindows-pip",
-        label: hostPipOpen() ? "Exit Picture-in-Picture" : "Picture-in-Picture (always on top)",
-        action: () => togglePip(streamKeyOf(stream), winKey)
-      });
       entries.push({
         id: "streamwindows-fullscreen",
         label: "Toggle Fullscreen",
@@ -545,13 +460,7 @@ function createStreamWindows(P) {
       toggleFullscreen,
       ensureWatching,
       inspectChrome,
-      togglePip,
-      enterPip,
-      exitPip,
-      hostPipOpen,
-      pipDiag,
-      popoutVideo,
-      sourceVideoFor,
+      windowDiag,
       getVolume,
       setVolume,
       isMuted,

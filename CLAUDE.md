@@ -57,6 +57,24 @@ Volume/mute go through `setLocalVolume(id, v, "stream")` /
 directly: `setLocalVolume` dispatches it *and* applies to the media engine, so a
 raw dispatch updates the store while leaving audio unchanged.
 
+## Always-on-top / PiP: ruled out (2026-08-31)
+
+Do not re-attempt without a native component. Every renderer-reachable route was
+measured and failed:
+- `popoutModule.setAlwaysOnTop(key, true)` sets `PopoutWindowStore`'s flag and the
+  window never floats — live, or preset before closing and reopening the popout
+- the popout window exposes no `DiscordNative` / `require` / `process` / `electron`
+- `require("electron")` in the host renderer gives only
+  `ipcRenderer, shell, webUtils` — no `BrowserWindow`
+- `win.focus()` does not raise it; the pinned window even sank behind others
+- `documentPictureInPicture.requestWindow()` throws
+  `InvalidStateError: Internal error: no window` inside a popout (not a
+  top-level browsing context); triggering from the main window is one-per-document
+
+All PiP code and UI was removed. Corner-snapping (`moveTo`/`resizeTo`) did work
+and could return as its own feature if wanted — it was only dropped because it
+was bundled with always-on-top.
+
 ## Still open / next
 
 1. Overlay mounts via a 1.5s poll; a `PopoutWindowStore` subscription would be

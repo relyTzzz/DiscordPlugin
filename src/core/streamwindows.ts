@@ -31,9 +31,6 @@ const OVERLAY_POLL_MS = 1500;
 /** get/setLocalVolume context for Go Live audio (vs "default" voice audio) */
 const STREAM_CTX = "stream";
 
-/** picture-in-picture window size, in px */
-const PIP_W = 480, PIP_H = 270;
-
 
 const OVERLAY_ID = "streamwindows-overlay";
 const STREAM_KEY_RE = /^DISCORD_CALL_TILE_POPOUT_\d+_((?:guild|call):.+)$/;
@@ -197,103 +194,6 @@ export function createStreamWindows(P: Platform): StreamWindows {
 
     const toggleFullscreen = (windowKey: string) => toggleWinFullscreen(windowFor(windowKey));
 
-    // ---- picture-in-picture -------------------------------------------------
-    /*
-     * Always-on-top via Discord is a dead end. Measured, not guessed:
-     *   - popoutModule.setAlwaysOnTop flips PopoutWindowStore's flag and nothing
-     *     floats, whether set live or preset before the window is recreated
-     *   - the popout window exposes no DiscordNative / require / process / electron
-     *   - require("electron") in the host renderer yields only
-     *     ipcRenderer, shell, webUtils — there is no BrowserWindow to reach
-     *   - win.focus() does not raise it
-     *
-     * What IS available in the popout is documentPictureInPicture. A Document
-     * PiP window is always-on-top by construction rather than by request, so it
-     * cannot fail the same way. We leave Discord's video element alone and just
-     * point a second <video> at the same MediaStream — no React surgery, no
-     * re-encode. Each popout is its own document, so the one-PiP-per-document
-     * limit still allows one per stream.
-     *
-     * Tradeoff: a Document PiP window is placed and sized by the browser, so we
-     * cannot snap it to a corner programmatically. Drag it once; Chromium
-     * remembers where you put it.
-     */
-
-    /** the <video> the popout is already decoding into */
-    function popoutVideo(win: any): HTMLVideoElement | null {
-        try {
-            const vids = Array.from(win.document.querySelectorAll("video")) as HTMLVideoElement[];
-            return vids.filter(v => (v as any).srcObject)
-                .sort((x, y) => y.videoWidth * y.videoHeight - x.videoWidth * x.videoHeight)[0] ?? null;
-        } catch { return null; }
-    }
-
-
-    /*
-     * requestWindow() from inside a popout fails with
-     *   InvalidStateError: Internal error: no window
-     * because a popout is not a top-level browsing context. The main Discord
-     * window is, so the PiP request has to originate there — and it needs a user
-     * gesture in THAT document, which means the context menu, not the button
-     * inside the popout. One Document PiP per document, so this is one at a time.
-     */
-    let hostPip: any = null;
-    const hostPipOpen = () => !!hostPip && !hostPip.closed;
-
-    /** best available decoding <video>: the popout's if open, else the main window's */
-    function sourceVideoFor(windowKey?: string): HTMLVideoElement | null {
-        if (windowKey) {
-            const w = windowFor(windowKey);
-            const v = w && popoutVideo(w);
-            if (v) return v;
-        }
-        return popoutVideo(globalThis as any);
-    }
-
-    async function enterPip(streamKey: string, windowKey?: string) {
-        if (hostPipOpen()) return log("a picture-in-picture window is already open");
-
-        const g: any = globalThis as any;
-        const dpip = g.documentPictureInPicture;
-        if (!dpip?.requestWindow) return log("documentPictureInPicture unavailable");
-
-        const src = sourceVideoFor(windowKey);
-        if (!src) return log("no decoding <video> found — pop the stream out (or watch it) first");
-
-        let pip: any;
-        try {
-            pip = await dpip.requestWindow({ width: PIP_W, height: PIP_H });
-        } catch (e: any) {
-            return log("requestWindow rejected:", e?.name, e?.message);
-        }
-
-        pip.document.body.style.cssText = "margin:0;background:#000;overflow:hidden";
-        const v = pip.document.createElement("video");
-        v.autoplay = true;
-        v.muted = true;          // audio keeps flowing through Discord's own pipeline
-        v.playsInline = true;
-        v.style.cssText = "width:100vw;height:100vh;object-fit:contain;background:#000";
-        v.srcObject = (src as any).srcObject;
-        pip.document.body.appendChild(v);
-        v.play?.().catch((e: any) => log("pip video play() rejected:", e?.message));
-
-        hostPip = pip;
-        mountOverlay(pip, streamKey, windowKey ?? "");
-        pip.addEventListener("pagehide", () => { hostPip = null; log("pip closed by user"); });
-        log("pip open for", streamKey, "| source", src.videoWidth + "x" + src.videoHeight);
-    }
-
-    function exitPip() {
-        try { hostPip?.close(); } catch { /* already gone */ }
-        hostPip = null;
-        log("pip closed");
-    }
-
-    function togglePip(streamKey: string, windowKey?: string) {
-        if (hostPipOpen()) exitPip();
-        else void enterPip(streamKey, windowKey);
-    }
-
     /** re-sync overlay button appearance after state changes from elsewhere */
     function refreshOverlayState(win: any) {
         try { win?.__swRefresh?.(); } catch { /* overlay not mounted */ }
@@ -321,7 +221,6 @@ export function createStreamWindows(P: Platform): StreamWindows {
             `</div>` +
             `<div class="sw-btns">` +
                 `<button class="sw-vol" title="Mute / volume"></button>` +
-                `<button class="sw-pip" title="Picture-in-picture is started from the main window: right-click the streamer → Picture-in-Picture">📌</button>` +
                 `<button class="sw-fs" title="Fullscreen (or double-click video)">⛶</button>` +
             `</div>`;
         doc.body.appendChild(el);
@@ -330,19 +229,16 @@ export function createStreamWindows(P: Platform): StreamWindows {
         const valEl = el.querySelector(".sw-val") as HTMLElement;
         const volBtn = el.querySelector(".sw-vol") as HTMLElement;
 
-        const pipBtn = el.querySelector(".sw-pip") as HTMLElement;
 
         const reflectMute = () => {
             const muted = isMuted(streamKey);
             volBtn.textContent = muted ? "🔇" : "🔊";
             volBtn.classList.toggle("sw-on", muted);
         };
-        const reflectPip = () => pipBtn.classList.toggle("sw-on", hostPipOpen());
         reflectMute();
-        reflectPip();
         // refreshOverlayState() calls this so the button stays in sync when
         // context menu or console rather than from this button
-        win.__swRefresh = () => { reflectMute(); reflectPip(); };
+        win.__swRefresh = () => reflectMute();
 
         range.addEventListener("input", () => {
             const v = +range.value;
@@ -361,14 +257,6 @@ export function createStreamWindows(P: Platform): StreamWindows {
          * corner is reachable without knowing a modifier key exists.
          * Shift-click still exits immediately from any corner.
          */
-        pipBtn.addEventListener("click", () => {
-            // Chromium refuses requestWindow() from a popout, so this button can
-            // only report where the working trigger lives.
-            log("Picture-in-picture must be started from the main window: "
-                + "right-click the streamer and choose Picture-in-Picture.");
-            pipBtn.textContent = "↗";
-            setTimeout(() => { pipBtn.textContent = "📌"; }, 1500);
-        });
         (el.querySelector(".sw-fs") as HTMLElement)
             .addEventListener("click", () => toggleWinFullscreen(win));
 
@@ -523,11 +411,10 @@ export function createStreamWindows(P: Platform): StreamWindows {
     }
 
     /**
-     * Print everything PiP placement depends on, per open window. Use this when a
-     * window snaps to the wrong corner or refuses to stay on top — it shows the
-     * raw geometry rather than making us guess.
+     * Dump each open stream window's geometry and the APIs it exposes. Handy
+     * when a window misbehaves and DevTools is awkward to reach.
      */
-    function pipDiag() {
+    function windowDiag() {
         const keys = liveKeys();
         if (!keys.length) return log("no popout windows open");
         for (const k of keys) {
@@ -540,7 +427,6 @@ export function createStreamWindows(P: Platform): StreamWindows {
                 "| inner:", win.innerWidth + "x" + win.innerHeight);
             log("   screen     avail L/T/W/H:", sc.availLeft, sc.availTop, sc.availWidth, sc.availHeight,
                 "| full:", sc.width + "x" + sc.height);
-            log("   host pip open:", hostPipOpen());
             log("   alwaysTop  store:", (() => {
                 try { return popoutStore()?.getIsAlwaysOnTop?.(k); } catch { return "threw"; }
             })());
@@ -552,13 +438,11 @@ export function createStreamWindows(P: Platform): StreamWindows {
             log("   popout API require:", typeof win.require,
                 "| process:", typeof win.process,
                 "| electron:", typeof win.electron,
-                "| docPiP:", typeof win.documentPictureInPicture,
                 "| opener:", !!win.opener);
             const g: any = globalThis as any;
             log("   host  API  require:", typeof g.require,
                 "| DiscordNative:", typeof g.DiscordNative,
-                "| DN.window.setAlwaysOnTop:", typeof g.DiscordNative?.window?.setAlwaysOnTop,
-                "| docPiP:", typeof g.documentPictureInPicture);
+                "| DN.window.setAlwaysOnTop:", typeof g.DiscordNative?.window?.setAlwaysOnTop);
             try {
                 const el = typeof g.require === "function" ? g.require("electron") : null;
                 log("   electron   keys:", el ? Object.keys(el).join(",") : "(not loadable)");
@@ -589,11 +473,6 @@ export function createStreamWindows(P: Platform): StreamWindows {
         }];
 
         if (winKey) {
-            entries.push({
-                id: "streamwindows-pip",
-                label: hostPipOpen() ? "Exit Picture-in-Picture" : "Picture-in-Picture (always on top)",
-                action: () => togglePip(streamKeyOf(stream), winKey)
-            });
             entries.push({
                 id: "streamwindows-fullscreen",
                 label: "Toggle Fullscreen",
@@ -631,7 +510,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
         debug: {
             popOut, popAllInConnectedChannel, closeAll, closeFor, setAlwaysOnTop,
             dumpKeys, discover, overlayTick, toggleFullscreen, ensureWatching, inspectChrome,
-            togglePip, enterPip, exitPip, hostPipOpen, pipDiag, popoutVideo, sourceVideoFor,
+            windowDiag,
             getVolume, setVolume, isMuted, toggleMute,
             streamKeyOf, streamForUser, streamState, connectedVoiceChannelId,
             liveKeys, windowFor, existingWindowKey,

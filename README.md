@@ -26,9 +26,6 @@ Stream to Window*. Repeat per streamer for one window each.
 - **In-window controls** — hover the bottom-left of a popped window:
   - 🔊 speaker button toggles mute for that stream
   - hovering reveals a compact vertical volume slider (0–200%)
-  - 📌 pins the window as **picture-in-picture**: snaps it to a screen corner at
-    a compact size and keeps it above other windows (shift-click to walk it
-    around the corners)
   - ⛶ button, or double-click the video, toggles fullscreen
 - **`/streamwindows`** — pop out every stream in your current voice channel.
 - Window position/size persist per streamer (Discord stores the bounds).
@@ -167,20 +164,6 @@ yourself putting logic in an adapter, it belongs in core.
 - Everything else — popping, the overlay, mute/volume/fullscreen — is identical,
   because it's the same `src/core` code.
 
-## Picture-in-picture: what "always on top" actually covers
-
-📌 pins a stream window above other windows. It **works** over normal windows,
-**borderless / windowed-fullscreen** games, and fullscreen video players.
-
-It does **not** work over a game in **exclusive fullscreen**. That game takes
-exclusive control of the display, and no ordinary window — this plugin, Discord's
-own popout, anything — can draw over it. That is exactly why Discord ships a
-separate injected game overlay (`discord_overlay2`), which hooks the game's
-render pipeline; replicating that is a completely different project.
-
-**The fix is in the game:** set it to *Borderless* / *Windowed Fullscreen*.
-Most modern titles default to it, and there's no meaningful performance cost.
-
 ## Known gaps
 
 - Overlay is re-mounted by a 1.5s poll rather than a store subscription.
@@ -189,6 +172,15 @@ Most modern titles default to it, and there's no meaningful performance cost.
   redundant write is inert.
 - Overlay doesn't live-update if you change volume from Discord's own menu.
 - No "stream ended" handling — the window stays until closed.
+- **No always-on-top / picture-in-picture.** Every route a plugin can reach was
+  tried and none works: Discord's `setAlwaysOnTop` only flips a flag in
+  `PopoutWindowStore` (live or preset before recreating the window), the popout
+  exposes no `DiscordNative`/`require`/`process`/`electron`, `require("electron")`
+  in the host renderer yields only `ipcRenderer`/`shell`/`webUtils` with no
+  `BrowserWindow`, `focus()` does not raise the window, and
+  `documentPictureInPicture.requestWindow()` fails inside a popout
+  (`InvalidStateError: no window`). Doing this properly needs a native component,
+  which is a different project.
 
 ## Legal
 

@@ -65,18 +65,11 @@ Move your mouse over the window and controls fade in at the **bottom-left**:
 |---|---|
 | 🔊 | Click to **mute/unmute** that stream |
 | | **Hover** the buttons for a **volume slider** |
-| 📌 | **Picture-in-picture** — shrinks the window, sticks it to a corner of your screen, and keeps it **on top of other windows**. Shift-click to move it to a different corner. |
 | ⛶ | **Fullscreen** — or just **double-click the video** |
 
 Right-clicking the streamer again gives you **Toggle Fullscreen** and
 **Close Stream Window**.
 
-> **Pinning it on top of a game:** the pinned window stays above normal windows,
-> **borderless / windowed-fullscreen** games, and fullscreen videos. It *cannot*
-> appear over a game running in **exclusive fullscreen** — Windows hands that
-> game the entire display and nothing is allowed to draw over it. If your stream
-> disappears behind a game, open the game's video settings and switch it to
-> **Borderless** or **Windowed Fullscreen**.
 
 ---
 
