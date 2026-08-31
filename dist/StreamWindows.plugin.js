@@ -2,7 +2,7 @@
  * @name StreamWindows
  * @author theta
  * @description Pop each watched Discord stream into its own OS window for multi-monitor viewing.
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 

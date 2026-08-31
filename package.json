@@ -1,6 +1,6 @@
 {
   "name": "streamwindows",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Pop each watched Discord stream into its own OS window for multi-monitor viewing. Builds as a Vencord userplugin and a BetterDiscord plugin from one source.",
   "//": "No \"type\":\"module\" — build scripts are .mjs (ESM regardless), and the BD output is CommonJS, which BD requires.",
