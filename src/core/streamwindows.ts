@@ -55,7 +55,9 @@ html:hover #${OVERLAY_ID}{opacity:.95}
    out of flow (position:fixed) rather than display:none'd, because Discord puts
    -webkit-app-region:drag on it — display:none would make the window
    undraggable.
-   The bar fades in on hover. Transparency lives in the colours rather than in
+   The bar fades in whenever the pointer is anywhere over the window — the same
+   trigger the control overlay uses — rather than only over the bar itself.
+   Transparency lives in the colours rather than in
    opacity on the whole bar: fading a whole element leaves the glyphs washed out
    and invisible against a dark stream, so the buttons get solid white icons on a
    translucent black pill instead. */
@@ -63,7 +65,7 @@ html:hover #${OVERLAY_ID}{opacity:.95}
  position:fixed!important;top:0;left:0;right:0;height:26px;z-index:2147483646;
  background:transparent!important;border:0!important;box-shadow:none!important;
  opacity:0;transition:opacity .15s;-webkit-app-region:drag}
-[class*="titleBar"]:hover{opacity:1}
+html:hover [class*="titleBar"]{opacity:1}
 /* the title text / wordmark never comes back, only the controls */
 [class*="titleBar"] [class*="wordmark"],[class*="titleBar"] [class*="title_"]{display:none!important}
 [class*="winButtons"]{-webkit-app-region:no-drag;background:rgba(0,0,0,.55);
