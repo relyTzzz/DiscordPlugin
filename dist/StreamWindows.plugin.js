@@ -31,17 +31,26 @@ html:hover #${OVERLAY_ID}{opacity:.95}
 /* Hide the popout's own title bar so the video runs edge to edge. It is lifted
    out of flow (position:fixed) rather than display:none'd, because Discord puts
    -webkit-app-region:drag on it \u2014 display:none would make the window
-   undraggable. Hovering the top strip fades the window buttons back in,
-   semi-transparent; hovering a button itself brings it to full opacity. */
+   undraggable.
+   The bar fades in on hover. Transparency lives in the colours rather than in
+   opacity on the whole bar: fading a whole element leaves the glyphs washed out
+   and invisible against a dark stream, so the buttons get solid white icons on a
+   translucent black pill instead. */
 [class*="titleBar"]{
  position:fixed!important;top:0;left:0;right:0;height:26px;z-index:2147483646;
  background:transparent!important;border:0!important;box-shadow:none!important;
  opacity:0;transition:opacity .15s;-webkit-app-region:drag}
-[class*="titleBar"]:hover{opacity:.55}
+[class*="titleBar"]:hover{opacity:1}
 /* the title text / wordmark never comes back, only the controls */
 [class*="titleBar"] [class*="wordmark"],[class*="titleBar"] [class*="title_"]{display:none!important}
-[class*="winButtons"]{-webkit-app-region:no-drag}
-[class*="winButton"]:hover{opacity:1!important;background:rgba(255,255,255,.15)!important}
+[class*="winButtons"]{-webkit-app-region:no-drag;background:rgba(0,0,0,.55);
+ border-radius:0 0 0 8px;overflow:hidden}
+/* white glyphs, whatever Discord's theme would have used */
+[class*="winButton"]{color:#fff!important;opacity:.9}
+[class*="winButton"] svg,[class*="winButton"] path{fill:currentColor!important;color:#fff!important}
+[class*="winButton"]:hover{opacity:1!important;background:rgba(255,255,255,.22)!important}
+/* keep Discord's red close-button hover, it reads correctly on black */
+[class*="winButtonClose"]:hover{background:#e81123!important}
 /* fullscreen hides the bar outright */
 :fullscreen [class*="titleBar"],:fullscreen [class*="typeWindows"],:fullscreen [class*="titlebar"]{display:none!important}
 `;
