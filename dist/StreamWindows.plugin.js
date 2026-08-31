@@ -158,17 +158,23 @@ function createStreamWindows(P) {
       return null;
     }
   }
-  const pipWindowOf = (win) => {
-    const p = win?.__swPipWin;
-    return p && !p.closed ? p : null;
-  };
-  const isPip = (win) => !!pipWindowOf(win);
-  async function enterPip(win, streamKey, windowKey) {
-    if (isPip(win)) return;
-    const dpip = win.documentPictureInPicture;
-    if (!dpip?.requestWindow) return log("documentPictureInPicture unavailable in popout");
-    const src = popoutVideo(win);
-    if (!src) return log("no decoding <video> in the popout yet \u2014 is the stream showing?");
+  let hostPip = null;
+  const hostPipOpen = () => !!hostPip && !hostPip.closed;
+  function sourceVideoFor(windowKey) {
+    if (windowKey) {
+      const w = windowFor(windowKey);
+      const v = w && popoutVideo(w);
+      if (v) return v;
+    }
+    return popoutVideo(globalThis);
+  }
+  async function enterPip(streamKey, windowKey) {
+    if (hostPipOpen()) return log("a picture-in-picture window is already open");
+    const g = globalThis;
+    const dpip = g.documentPictureInPicture;
+    if (!dpip?.requestWindow) return log("documentPictureInPicture unavailable");
+    const src = sourceVideoFor(windowKey);
+    if (!src) return log("no decoding <video> found \u2014 pop the stream out (or watch it) first");
     let pip;
     try {
       pip = await dpip.requestWindow({ width: PIP_W, height: PIP_H });
@@ -184,41 +190,29 @@ function createStreamWindows(P) {
     v.srcObject = src.srcObject;
     pip.document.body.appendChild(v);
     v.play?.().catch((e) => log("pip video play() rejected:", e?.message));
-    win.__swPipWin = pip;
-    mountOverlay(pip, streamKey, windowKey);
+    hostPip = pip;
+    mountOverlay(pip, streamKey, windowKey ?? "");
     pip.addEventListener("pagehide", () => {
-      win.__swPipWin = null;
-      refreshOverlayState(win);
+      hostPip = null;
       log("pip closed by user");
     });
-    log("pip open:", PIP_W + "x" + PIP_H, "for", streamKey);
-    refreshOverlayState(win);
+    log("pip open for", streamKey, "| source", src.videoWidth + "x" + src.videoHeight);
   }
-  function exitPip(win) {
-    const pip = pipWindowOf(win);
-    win.__swPipWin = null;
+  function exitPip() {
     try {
-      pip?.close();
+      hostPip?.close();
     } catch {
     }
-    refreshOverlayState(win);
+    hostPip = null;
     log("pip closed");
   }
-  function togglePip(windowKey) {
-    const win = windowFor(windowKey);
-    if (!win) return log("no window for", windowKey);
-    const m = STREAM_KEY_RE.exec(windowKey);
-    if (!m) return log("cannot parse window key:", windowKey);
-    if (isPip(win)) exitPip(win);
-    else void enterPip(win, m[1], windowKey);
+  function togglePip(streamKey, windowKey) {
+    if (hostPipOpen()) exitPip();
+    else void enterPip(streamKey, windowKey);
   }
   function refreshOverlayState(win) {
     try {
       win?.__swRefresh?.();
-    } catch {
-    }
-    try {
-      pipWindowOf(win)?.__swRefresh?.();
     } catch {
     }
   }
@@ -234,7 +228,7 @@ function createStreamWindows(P) {
     const vol = Math.round(getVolume(streamKey));
     const el = doc.createElement("div");
     el.id = OVERLAY_ID;
-    el.innerHTML = `<div class="sw-pop"><input type="range" min="0" max="200" step="1" value="${vol}"><span class="sw-val">${vol}%</span></div><div class="sw-btns"><button class="sw-vol" title="Mute / volume"></button><button class="sw-pip" title="Picture-in-picture \u2014 a small always-on-top window. Drag it where you want it.">\u{1F4CC}</button><button class="sw-fs" title="Fullscreen (or double-click video)">\u26F6</button></div>`;
+    el.innerHTML = `<div class="sw-pop"><input type="range" min="0" max="200" step="1" value="${vol}"><span class="sw-val">${vol}%</span></div><div class="sw-btns"><button class="sw-vol" title="Mute / volume"></button><button class="sw-pip" title="Picture-in-picture is started from the main window: right-click the streamer \u2192 Picture-in-Picture">\u{1F4CC}</button><button class="sw-fs" title="Fullscreen (or double-click video)">\u26F6</button></div>`;
     doc.body.appendChild(el);
     const range = el.querySelector("input");
     const valEl = el.querySelector(".sw-val");
@@ -245,7 +239,7 @@ function createStreamWindows(P) {
       volBtn.textContent = muted ? "\u{1F507}" : "\u{1F50A}";
       volBtn.classList.toggle("sw-on", muted);
     };
-    const reflectPip = () => pipBtn.classList.toggle("sw-on", isPip(win));
+    const reflectPip = () => pipBtn.classList.toggle("sw-on", hostPipOpen());
     reflectMute();
     reflectPip();
     win.__swRefresh = () => {
@@ -261,7 +255,13 @@ function createStreamWindows(P) {
       toggleMute(streamKey);
       setTimeout(reflectMute, 60);
     });
-    pipBtn.addEventListener("click", () => togglePip(windowKey));
+    pipBtn.addEventListener("click", () => {
+      log("Picture-in-picture must be started from the main window: right-click the streamer and choose Picture-in-Picture.");
+      pipBtn.textContent = "\u2197";
+      setTimeout(() => {
+        pipBtn.textContent = "\u{1F4CC}";
+      }, 1500);
+    });
     el.querySelector(".sw-fs").addEventListener("click", () => toggleWinFullscreen(win));
     if (!win.__swDblBound) {
       win.__swDblBound = true;
@@ -438,7 +438,7 @@ function createStreamWindows(P) {
         "| full:",
         sc.width + "x" + sc.height
       );
-      log("   pip window open:", isPip(win));
+      log("   host pip open:", hostPipOpen());
       log("   alwaysTop  store:", (() => {
         try {
           return popoutStore()?.getIsAlwaysOnTop?.(k);
@@ -499,8 +499,8 @@ function createStreamWindows(P) {
     if (winKey) {
       entries.push({
         id: "streamwindows-pip",
-        label: isPip(windowFor(winKey)) ? "Exit Picture-in-Picture" : "Picture-in-Picture",
-        action: () => togglePip(winKey)
+        label: hostPipOpen() ? "Exit Picture-in-Picture" : "Picture-in-Picture (always on top)",
+        action: () => togglePip(streamKeyOf(stream), winKey)
       });
       entries.push({
         id: "streamwindows-fullscreen",
@@ -546,9 +546,12 @@ function createStreamWindows(P) {
       ensureWatching,
       inspectChrome,
       togglePip,
-      isPip,
+      enterPip,
+      exitPip,
+      hostPipOpen,
       pipDiag,
       popoutVideo,
+      sourceVideoFor,
       getVolume,
       setVolume,
       isMuted,

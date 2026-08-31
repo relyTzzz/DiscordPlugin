@@ -228,23 +228,40 @@ export function createStreamWindows(P: Platform): StreamWindows {
         } catch { return null; }
     }
 
-    const pipWindowOf = (win: any) => {
-        const p = win?.__swPipWin;
-        return p && !p.closed ? p : null;
-    };
-    const isPip = (win: any) => !!pipWindowOf(win);
 
-    async function enterPip(win: any, streamKey: string, windowKey: string) {
-        if (isPip(win)) return;
-        const dpip = win.documentPictureInPicture;
-        if (!dpip?.requestWindow) return log("documentPictureInPicture unavailable in popout");
+    /*
+     * requestWindow() from inside a popout fails with
+     *   InvalidStateError: Internal error: no window
+     * because a popout is not a top-level browsing context. The main Discord
+     * window is, so the PiP request has to originate there — and it needs a user
+     * gesture in THAT document, which means the context menu, not the button
+     * inside the popout. One Document PiP per document, so this is one at a time.
+     */
+    let hostPip: any = null;
+    const hostPipOpen = () => !!hostPip && !hostPip.closed;
 
-        const src = popoutVideo(win);
-        if (!src) return log("no decoding <video> in the popout yet — is the stream showing?");
+    /** best available decoding <video>: the popout's if open, else the main window's */
+    function sourceVideoFor(windowKey?: string): HTMLVideoElement | null {
+        if (windowKey) {
+            const w = windowFor(windowKey);
+            const v = w && popoutVideo(w);
+            if (v) return v;
+        }
+        return popoutVideo(globalThis as any);
+    }
+
+    async function enterPip(streamKey: string, windowKey?: string) {
+        if (hostPipOpen()) return log("a picture-in-picture window is already open");
+
+        const g: any = globalThis as any;
+        const dpip = g.documentPictureInPicture;
+        if (!dpip?.requestWindow) return log("documentPictureInPicture unavailable");
+
+        const src = sourceVideoFor(windowKey);
+        if (!src) return log("no decoding <video> found — pop the stream out (or watch it) first");
 
         let pip: any;
         try {
-            // needs a user gesture in THIS document; the pin click is one
             pip = await dpip.requestWindow({ width: PIP_W, height: PIP_H });
         } catch (e: any) {
             return log("requestWindow rejected:", e?.name, e?.message);
@@ -260,38 +277,26 @@ export function createStreamWindows(P: Platform): StreamWindows {
         pip.document.body.appendChild(v);
         v.play?.().catch((e: any) => log("pip video play() rejected:", e?.message));
 
-        win.__swPipWin = pip;
-        mountOverlay(pip, streamKey, windowKey);   // same controls inside the PiP window
-        pip.addEventListener("pagehide", () => {
-            win.__swPipWin = null;
-            refreshOverlayState(win);
-            log("pip closed by user");
-        });
-        log("pip open:", PIP_W + "x" + PIP_H, "for", streamKey);
-        refreshOverlayState(win);
+        hostPip = pip;
+        mountOverlay(pip, streamKey, windowKey ?? "");
+        pip.addEventListener("pagehide", () => { hostPip = null; log("pip closed by user"); });
+        log("pip open for", streamKey, "| source", src.videoWidth + "x" + src.videoHeight);
     }
 
-    function exitPip(win: any) {
-        const pip = pipWindowOf(win);
-        win.__swPipWin = null;
-        try { pip?.close(); } catch { /* already gone */ }
-        refreshOverlayState(win);
+    function exitPip() {
+        try { hostPip?.close(); } catch { /* already gone */ }
+        hostPip = null;
         log("pip closed");
     }
 
-    function togglePip(windowKey: string) {
-        const win = windowFor(windowKey);
-        if (!win) return log("no window for", windowKey);
-        const m = STREAM_KEY_RE.exec(windowKey);
-        if (!m) return log("cannot parse window key:", windowKey);
-        if (isPip(win)) exitPip(win);
-        else void enterPip(win, m[1], windowKey);
+    function togglePip(streamKey: string, windowKey?: string) {
+        if (hostPipOpen()) exitPip();
+        else void enterPip(streamKey, windowKey);
     }
 
     /** re-sync overlay button appearance after state changes from elsewhere */
     function refreshOverlayState(win: any) {
         try { win?.__swRefresh?.(); } catch { /* overlay not mounted */ }
-        try { pipWindowOf(win)?.__swRefresh?.(); } catch { /* no pip */ }
     }
 
     // ---- in-window control overlay -----------------------------------------
@@ -316,7 +321,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
             `</div>` +
             `<div class="sw-btns">` +
                 `<button class="sw-vol" title="Mute / volume"></button>` +
-                `<button class="sw-pip" title="Picture-in-picture — a small always-on-top window. Drag it where you want it.">📌</button>` +
+                `<button class="sw-pip" title="Picture-in-picture is started from the main window: right-click the streamer → Picture-in-Picture">📌</button>` +
                 `<button class="sw-fs" title="Fullscreen (or double-click video)">⛶</button>` +
             `</div>`;
         doc.body.appendChild(el);
@@ -332,7 +337,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
             volBtn.textContent = muted ? "🔇" : "🔊";
             volBtn.classList.toggle("sw-on", muted);
         };
-        const reflectPip = () => pipBtn.classList.toggle("sw-on", isPip(win));
+        const reflectPip = () => pipBtn.classList.toggle("sw-on", hostPipOpen());
         reflectMute();
         reflectPip();
         // refreshOverlayState() calls this so the button stays in sync when
@@ -356,7 +361,14 @@ export function createStreamWindows(P: Platform): StreamWindows {
          * corner is reachable without knowing a modifier key exists.
          * Shift-click still exits immediately from any corner.
          */
-        pipBtn.addEventListener("click", () => togglePip(windowKey));
+        pipBtn.addEventListener("click", () => {
+            // Chromium refuses requestWindow() from a popout, so this button can
+            // only report where the working trigger lives.
+            log("Picture-in-picture must be started from the main window: "
+                + "right-click the streamer and choose Picture-in-Picture.");
+            pipBtn.textContent = "↗";
+            setTimeout(() => { pipBtn.textContent = "📌"; }, 1500);
+        });
         (el.querySelector(".sw-fs") as HTMLElement)
             .addEventListener("click", () => toggleWinFullscreen(win));
 
@@ -528,7 +540,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
                 "| inner:", win.innerWidth + "x" + win.innerHeight);
             log("   screen     avail L/T/W/H:", sc.availLeft, sc.availTop, sc.availWidth, sc.availHeight,
                 "| full:", sc.width + "x" + sc.height);
-            log("   pip window open:", isPip(win));
+            log("   host pip open:", hostPipOpen());
             log("   alwaysTop  store:", (() => {
                 try { return popoutStore()?.getIsAlwaysOnTop?.(k); } catch { return "threw"; }
             })());
@@ -579,8 +591,8 @@ export function createStreamWindows(P: Platform): StreamWindows {
         if (winKey) {
             entries.push({
                 id: "streamwindows-pip",
-                label: isPip(windowFor(winKey)) ? "Exit Picture-in-Picture" : "Picture-in-Picture",
-                action: () => togglePip(winKey)
+                label: hostPipOpen() ? "Exit Picture-in-Picture" : "Picture-in-Picture (always on top)",
+                action: () => togglePip(streamKeyOf(stream), winKey)
             });
             entries.push({
                 id: "streamwindows-fullscreen",
@@ -619,7 +631,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
         debug: {
             popOut, popAllInConnectedChannel, closeAll, closeFor, setAlwaysOnTop,
             dumpKeys, discover, overlayTick, toggleFullscreen, ensureWatching, inspectChrome,
-            togglePip, isPip, pipDiag, popoutVideo,
+            togglePip, enterPip, exitPip, hostPipOpen, pipDiag, popoutVideo, sourceVideoFor,
             getVolume, setVolume, isMuted, toggleMute,
             streamKeyOf, streamForUser, streamState, connectedVoiceChannelId,
             liveKeys, windowFor, existingWindowKey,
