@@ -76,6 +76,11 @@ html:hover [class*="titleBar"]{opacity:1}
 [class*="winButton"]:hover{opacity:1!important;background:rgba(255,255,255,.22)!important}
 /* keep Discord's red close-button hover, it reads correctly on black */
 [class*="winButtonClose"]:hover{background:#e81123!important}
+/* Discord's own popout HUD buttons ("Stay On Top", "Zoom In"/"Zoom Out"). Matched
+   by accessible name rather than class, since the classes are hashed per build.
+   Our overlay uses title= only, so it is unaffected. */
+[aria-label="Stay On Top"],[aria-label="Zoom In"],[aria-label="Zoom Out"],
+[aria-label="Stay on top"],[aria-label="Zoom in"],[aria-label="Zoom out"]{display:none!important}
 /* fullscreen hides the bar outright */
 :fullscreen [class*="titleBar"],:fullscreen [class*="typeWindows"],:fullscreen [class*="titlebar"]{display:none!important}
 `;
@@ -270,6 +275,21 @@ export function createStreamWindows(P: Platform): StreamWindows {
          */
         (el.querySelector(".sw-fs") as HTMLElement)
             .addEventListener("click", () => toggleWinFullscreen(win));
+
+        if (!win.__swLoggedControls) {
+            win.__swLoggedControls = true;
+            try {
+                const btns = Array.from(win.document.querySelectorAll("button,[role=button]")) as any[];
+                log("popout has", btns.length, "button(s):");
+                for (const b of btns.slice(0, 25)) {
+                    const cls = typeof b.className === "string" ? b.className : "";
+                    log("   aria:", JSON.stringify(b.getAttribute?.("aria-label")),
+                        "| title:", JSON.stringify(b.getAttribute?.("title")),
+                        "| text:", JSON.stringify((b.textContent || "").trim().slice(0, 24)),
+                        "| class:", JSON.stringify(cls.slice(0, 80)));
+                }
+            } catch (e: any) { log("control inventory threw", e?.message); }
+        }
 
         // The popout is a React app that can wipe body children, so the poll
         // re-mounts this overlay. Bind window-level listeners once per window or
