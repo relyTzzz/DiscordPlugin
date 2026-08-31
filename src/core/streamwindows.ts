@@ -243,11 +243,26 @@ export function createStreamWindows(P: Platform): StreamWindows {
     const isPip = (win: any) => !!win?.__swPip;
 
     function setAlwaysOnTopFor(windowKey: string, win: any, on: boolean) {
-        // Discord's own action — persists in PopoutWindowStore state
-        try { popoutModule()?.setAlwaysOnTop?.(windowKey, on); }
-        catch (e: any) { log("setAlwaysOnTop threw", e?.message); }
-        // belt and braces: the popout's own native window handle
-        try { win?.DiscordNative?.window?.setAlwaysOnTop?.(on); } catch { /* not exposed */ }
+        const tried: string[] = [];
+
+        // 1. Discord's own action — also persists the flag in PopoutWindowStore
+        try { popoutModule()?.setAlwaysOnTop?.(windowKey, on); tried.push("popout.setAlwaysOnTop"); }
+        catch (e: any) { log("popout.setAlwaysOnTop threw", e?.message); }
+
+        // 2. the popout's own native window handle. Signature is undocumented, so
+        //    try (bool) and, for Electron's levelled form, (bool, level).
+        const dn = win?.DiscordNative?.window;
+        if (dn?.setAlwaysOnTop) {
+            try { dn.setAlwaysOnTop(on); tried.push("DiscordNative(bool)"); }
+            catch (e: any) { log("DiscordNative.setAlwaysOnTop(bool) threw", e?.message); }
+            try { dn.setAlwaysOnTop(on, on ? "screen-saver" : "normal"); tried.push("DiscordNative(bool,level)"); }
+            catch { /* single-arg form only */ }
+        }
+
+        const readBack = (() => {
+            try { return popoutStore()?.getIsAlwaysOnTop?.(windowKey); } catch { return "?"; }
+        })();
+        log("alwaysOnTop", on, "via", tried.join(" + ") || "NOTHING", "| store says:", readBack);
     }
 
     /** turn PiP on (snapping to `corner`, default: nearest) or off (restore bounds) */
@@ -510,6 +525,37 @@ export function createStreamWindows(P: Platform): StreamWindows {
         }
     }
 
+    /**
+     * Print everything PiP placement depends on, per open window. Use this when a
+     * window snaps to the wrong corner or refuses to stay on top — it shows the
+     * raw geometry rather than making us guess.
+     */
+    function pipDiag() {
+        const keys = liveKeys();
+        if (!keys.length) return log("no popout windows open");
+        for (const k of keys) {
+            const win = windowFor(k);
+            if (!win) { log(k, "-> no window object"); continue; }
+            const sc = win.screen ?? {};
+            const a = workArea(win);
+            log("window:", k);
+            log("   position   screenX/Y:", win.screenX, win.screenY,
+                "| outer:", win.outerWidth + "x" + win.outerHeight,
+                "| inner:", win.innerWidth + "x" + win.innerHeight);
+            log("   screen     avail L/T/W/H:", sc.availLeft, sc.availTop, sc.availWidth, sc.availHeight,
+                "| full:", sc.width + "x" + sc.height);
+            log("   workArea   ->", a);
+            log("   corner     nearest:", nearestCorner(win), "| remembered:", win.__swPipCorner ?? "(none)");
+            log("   pip state  __swPip:", !!win.__swPip, "| prevBounds:", win.__swPrevBounds ?? "(none)");
+            log("   alwaysTop  store:", (() => {
+                try { return popoutStore()?.getIsAlwaysOnTop?.(k); } catch { return "threw"; }
+            })());
+            const dn = win.DiscordNative?.window;
+            log("   native     DiscordNative.window:", dn ? Object.keys(dn).join(",") : "ABSENT");
+            log("   canMove    moveTo:", typeof win.moveTo, "resizeTo:", typeof win.resizeTo);
+        }
+    }
+
     // ---- context menu -------------------------------------------------------
     function menuEntriesFor(props: any): MenuEntry[] {
         const user = props?.user;
@@ -575,7 +621,8 @@ export function createStreamWindows(P: Platform): StreamWindows {
         debug: {
             popOut, popAllInConnectedChannel, closeAll, closeFor, setAlwaysOnTop,
             dumpKeys, discover, overlayTick, toggleFullscreen, ensureWatching, inspectChrome,
-            setPip, togglePip, cyclePipCorner, snapToCorner, isPip,
+            setPip, togglePip, cyclePipCorner, snapToCorner, isPip, pipDiag,
+            nearestCorner, workArea,
             getVolume, setVolume, isMuted, toggleMute,
             streamKeyOf, streamForUser, streamState, connectedVoiceChannelId,
             liveKeys, windowFor, existingWindowKey,

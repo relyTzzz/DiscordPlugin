@@ -182,15 +182,35 @@ function createStreamWindows(P) {
   }
   const isPip = (win) => !!win?.__swPip;
   function setAlwaysOnTopFor(windowKey, win, on) {
+    const tried = [];
     try {
       popoutModule()?.setAlwaysOnTop?.(windowKey, on);
+      tried.push("popout.setAlwaysOnTop");
     } catch (e) {
-      log("setAlwaysOnTop threw", e?.message);
+      log("popout.setAlwaysOnTop threw", e?.message);
     }
-    try {
-      win?.DiscordNative?.window?.setAlwaysOnTop?.(on);
-    } catch {
+    const dn = win?.DiscordNative?.window;
+    if (dn?.setAlwaysOnTop) {
+      try {
+        dn.setAlwaysOnTop(on);
+        tried.push("DiscordNative(bool)");
+      } catch (e) {
+        log("DiscordNative.setAlwaysOnTop(bool) threw", e?.message);
+      }
+      try {
+        dn.setAlwaysOnTop(on, on ? "screen-saver" : "normal");
+        tried.push("DiscordNative(bool,level)");
+      } catch {
+      }
     }
+    const readBack = (() => {
+      try {
+        return popoutStore()?.getIsAlwaysOnTop?.(windowKey);
+      } catch {
+        return "?";
+      }
+    })();
+    log("alwaysOnTop", on, "via", tried.join(" + ") || "NOTHING", "| store says:", readBack);
   }
   function setPip(windowKey, on, corner) {
     const win = windowFor(windowKey);
@@ -430,6 +450,51 @@ function createStreamWindows(P) {
       if (!seen.size) log("   (no titlebar-ish elements found)");
     }
   }
+  function pipDiag() {
+    const keys = liveKeys();
+    if (!keys.length) return log("no popout windows open");
+    for (const k of keys) {
+      const win = windowFor(k);
+      if (!win) {
+        log(k, "-> no window object");
+        continue;
+      }
+      const sc = win.screen ?? {};
+      const a = workArea(win);
+      log("window:", k);
+      log(
+        "   position   screenX/Y:",
+        win.screenX,
+        win.screenY,
+        "| outer:",
+        win.outerWidth + "x" + win.outerHeight,
+        "| inner:",
+        win.innerWidth + "x" + win.innerHeight
+      );
+      log(
+        "   screen     avail L/T/W/H:",
+        sc.availLeft,
+        sc.availTop,
+        sc.availWidth,
+        sc.availHeight,
+        "| full:",
+        sc.width + "x" + sc.height
+      );
+      log("   workArea   ->", a);
+      log("   corner     nearest:", nearestCorner(win), "| remembered:", win.__swPipCorner ?? "(none)");
+      log("   pip state  __swPip:", !!win.__swPip, "| prevBounds:", win.__swPrevBounds ?? "(none)");
+      log("   alwaysTop  store:", (() => {
+        try {
+          return popoutStore()?.getIsAlwaysOnTop?.(k);
+        } catch {
+          return "threw";
+        }
+      })());
+      const dn = win.DiscordNative?.window;
+      log("   native     DiscordNative.window:", dn ? Object.keys(dn).join(",") : "ABSENT");
+      log("   canMove    moveTo:", typeof win.moveTo, "resizeTo:", typeof win.resizeTo);
+    }
+  }
   function menuEntriesFor(props) {
     const user = props?.user;
     if (!user?.id) return [];
@@ -500,6 +565,9 @@ function createStreamWindows(P) {
       cyclePipCorner,
       snapToCorner,
       isPip,
+      pipDiag,
+      nearestCorner,
+      workArea,
       getVolume,
       setVolume,
       isMuted,
