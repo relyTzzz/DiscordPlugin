@@ -10,9 +10,10 @@
  * than failing the build.
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { marked } from "marked";
 
 
@@ -69,7 +70,10 @@ const CSS = `
 
 function renderPdf(outPdf) {
     const browser = findBrowser();
-    if (!browser) return null;
+    if (!browser) {
+        console.warn("! No Chromium-based browser found (Edge/Chrome) — cannot render the PDF.");
+        return null;
+    }
 
     const html = `<!doctype html><meta charset="utf-8">
 <title>StreamWindows ${pkg.version} — Install Guide</title>
@@ -77,14 +81,21 @@ function renderPdf(outPdf) {
 ${marked.parse(readFileSync(guideMd, "utf8"))}`;
 
     const tmpHtml = join(dist, "_install.tmp.html");
+    const tmpProfile = mkdtempSync(join(tmpdir(), "sw-browser-"));
     writeFileSync(tmpHtml, html, "utf8");
     try {
         execFileSync(browser, [
             "--headless=new",
             "--disable-gpu",
             "--no-pdf-header-footer",
+            // Without a private profile, launching Edge/Chrome while a normal
+            // window is open just hands the arguments to the running instance,
+            // which ignores them and leaves an error page behind.
+            `--user-data-dir=${tmpProfile}`,
             `--print-to-pdf=${outPdf}`,
-            tmpHtml
+            // a file:// URL, not a bare Windows path, or Chromium reports
+            // ERR_FILE_NOT_FOUND and prints its error page instead
+            pathToFileURL(tmpHtml).href
         ], { stdio: "ignore", timeout: 120000 });
         return existsSync(outPdf) ? outPdf : null;
     } catch (e) {
@@ -92,6 +103,11 @@ ${marked.parse(readFileSync(guideMd, "utf8"))}`;
         return null;
     } finally {
         rmSync(tmpHtml, { force: true });
+        // the browser can still be releasing profile locks as it exits; a failed
+        // cleanup of a temp dir must never fail the build
+        try {
+            rmSync(tmpProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        } catch { /* the OS will reap it from tmp */ }
     }
 }
 
@@ -99,7 +115,7 @@ mkdirSync(dist, { recursive: true });
 const pdf = join(dist, "StreamWindows - Install Guide.pdf");
 const madePdf = renderPdf(pdf);
 if (madePdf) console.log("rendered", pdf);
-else console.warn("! No Chromium-based browser found — shipping INSTALL.md instead of a PDF.");
+else console.warn("! Shipping INSTALL.md instead of a PDF.");
 
 const zipPath = join(dist, `StreamWindows-v${pkg.version}.zip`);
 rmSync(zipPath, { force: true });
