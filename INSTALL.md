@@ -45,6 +45,24 @@ Done.
 
 ---
 
+## What you're looking for
+
+Join a voice channel where someone is streaming, then **right-click them** —
+either their name in the voice channel list, or their video tile:
+
+![Right-clicking a streamer in Discord](docs/pop-out-menu.png)
+
+> ⚠️ **Don't click the item boxed in red.** That one is Discord's *own* "Pop Out
+> Stream", which only gives you a single small window.
+>
+> Scroll further down the same menu to **"Pop Out Stream to Window"** — that's
+> this plugin, and it's the one that gives every streamer their own window.
+
+Repeat for each person you want to watch. Each gets its own window you can drag
+to any monitor.
+
+---
+
 ## Updating
 
 There's no auto-update. When you're sent a newer `StreamWindows.plugin.js`, drop

@@ -66,6 +66,8 @@ const CSS = `
   blockquote p { margin: 0; }
   hr { border: 0; border-top: 1px solid #d8dbe0; margin: 14pt 0; }
   a { color: #3b49df; text-decoration: none; }
+  img { max-width: 100%; height: auto; border: 1px solid #d8dbe0; border-radius: 4px;
+        display: block; margin: 8pt auto; page-break-inside: avoid; }
 `;
 
 async function renderPdf(outPdf) {
@@ -77,6 +79,7 @@ async function renderPdf(outPdf) {
 
     const html = `<!doctype html><meta charset="utf-8">
 <title>StreamWindows ${pkg.version} — Install Guide</title>
+<base href="${pathToFileURL(root + "/").href}">
 <style>${CSS}</style>
 ${marked.parse(readFileSync(guideMd, "utf8"))}`;
 
