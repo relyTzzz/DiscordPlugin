@@ -224,7 +224,7 @@ function createStreamWindows(P) {
           h: win.outerHeight
         };
       }
-      const c = corner ?? win.__swPipCorner ?? nearestCorner(win);
+      const c = corner ?? win.__swPipCorner ?? CORNERS[0];
       win.__swPip = true;
       win.__swPipCorner = c;
       snapToCorner(win, c);
@@ -273,7 +273,7 @@ function createStreamWindows(P) {
     const vol = Math.round(getVolume(streamKey));
     const el = doc.createElement("div");
     el.id = OVERLAY_ID;
-    el.innerHTML = `<div class="sw-pop"><input type="range" min="0" max="200" step="1" value="${vol}"><span class="sw-val">${vol}%</span></div><div class="sw-btns"><button class="sw-vol" title="Mute / volume"></button><button class="sw-pip" title="Picture-in-picture: pin to a screen corner, always on top (shift-click to move corner)">\u{1F4CC}</button><button class="sw-fs" title="Fullscreen (or double-click video)">\u26F6</button></div>`;
+    el.innerHTML = `<div class="sw-pop"><input type="range" min="0" max="200" step="1" value="${vol}"><span class="sw-val">${vol}%</span></div><div class="sw-btns"><button class="sw-vol" title="Mute / volume"></button><button class="sw-pip" title="Picture-in-picture \u2014 click to pin, click again to move it around the corners, shift-click to unpin">\u{1F4CC}</button><button class="sw-fs" title="Fullscreen (or double-click video)">\u26F6</button></div>`;
     doc.body.appendChild(el);
     const range = el.querySelector("input");
     const valEl = el.querySelector(".sw-val");
@@ -301,8 +301,13 @@ function createStreamWindows(P) {
       setTimeout(reflectMute, 60);
     });
     pipBtn.addEventListener("click", (ev) => {
-      if (ev.shiftKey && isPip(win)) cyclePipCorner(windowKey);
-      else togglePip(windowKey);
+      if (ev.shiftKey) {
+        setPip(windowKey, false);
+        return;
+      }
+      if (!isPip(win)) setPip(windowKey, true, CORNERS[0]);
+      else if (win.__swPipCorner === CORNERS[CORNERS.length - 1]) setPip(windowKey, false);
+      else cyclePipCorner(windowKey);
     });
     el.querySelector(".sw-fs").addEventListener("click", () => toggleWinFullscreen(win));
     if (!win.__swDblBound) {
@@ -494,6 +499,35 @@ function createStreamWindows(P) {
       const dn = win.DiscordNative?.window;
       log("   native     DiscordNative.window:", dn ? Object.keys(dn).join(",") : "ABSENT");
       log("   canMove    moveTo:", typeof win.moveTo, "resizeTo:", typeof win.resizeTo);
+      log(
+        "   popout API require:",
+        typeof win.require,
+        "| process:",
+        typeof win.process,
+        "| electron:",
+        typeof win.electron,
+        "| docPiP:",
+        typeof win.documentPictureInPicture,
+        "| opener:",
+        !!win.opener
+      );
+      const g = globalThis;
+      log(
+        "   host  API  require:",
+        typeof g.require,
+        "| DiscordNative:",
+        typeof g.DiscordNative,
+        "| DN.window.setAlwaysOnTop:",
+        typeof g.DiscordNative?.window?.setAlwaysOnTop,
+        "| docPiP:",
+        typeof g.documentPictureInPicture
+      );
+      try {
+        const el = typeof g.require === "function" ? g.require("electron") : null;
+        log("   electron   keys:", el ? Object.keys(el).join(",") : "(not loadable)");
+      } catch (e) {
+        log("   electron   require threw:", e?.message);
+      }
     }
   }
   function menuEntriesFor(props) {

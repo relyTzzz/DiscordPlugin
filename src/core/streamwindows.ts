@@ -277,7 +277,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
                     w: win.outerWidth, h: win.outerHeight
                 };
             }
-            const c = corner ?? win.__swPipCorner ?? nearestCorner(win);
+            const c = corner ?? win.__swPipCorner ?? CORNERS[0];
             win.__swPip = true;
             win.__swPipCorner = c;
             snapToCorner(win, c);
@@ -336,7 +336,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
             `</div>` +
             `<div class="sw-btns">` +
                 `<button class="sw-vol" title="Mute / volume"></button>` +
-                `<button class="sw-pip" title="Picture-in-picture: pin to a screen corner, always on top (shift-click to move corner)">📌</button>` +
+                `<button class="sw-pip" title="Picture-in-picture — click to pin, click again to move it around the corners, shift-click to unpin">📌</button>` +
                 `<button class="sw-fs" title="Fullscreen (or double-click video)">⛶</button>` +
             `</div>`;
         doc.body.appendChild(el);
@@ -368,10 +368,19 @@ export function createStreamWindows(P: Platform): StreamWindows {
             toggleMute(streamKey);
             setTimeout(reflectMute, 60);
         });
+        /*
+         * Click cycles: off -> bottom-right -> bottom-left -> top-left ->
+         * top-right -> off. Inferring the "nearest" corner tested badly — it
+         * looks arbitrary, because which corner you get depends on where the
+         * window happened to be. An explicit cycle is predictable, and every
+         * corner is reachable without knowing a modifier key exists.
+         * Shift-click still exits immediately from any corner.
+         */
         pipBtn.addEventListener("click", (ev: any) => {
-            // shift-click walks an already-pinned window around the corners
-            if (ev.shiftKey && isPip(win)) cyclePipCorner(windowKey);
-            else togglePip(windowKey);
+            if (ev.shiftKey) { setPip(windowKey, false); return; }
+            if (!isPip(win)) setPip(windowKey, true, CORNERS[0]);
+            else if (win.__swPipCorner === CORNERS[CORNERS.length - 1]) setPip(windowKey, false);
+            else cyclePipCorner(windowKey);
         });
         (el.querySelector(".sw-fs") as HTMLElement)
             .addEventListener("click", () => toggleWinFullscreen(win));
@@ -554,6 +563,22 @@ export function createStreamWindows(P: Platform): StreamWindows {
             const dn = win.DiscordNative?.window;
             log("   native     DiscordNative.window:", dn ? Object.keys(dn).join(",") : "ABSENT");
             log("   canMove    moveTo:", typeof win.moveTo, "resizeTo:", typeof win.resizeTo);
+            // What else could pin this window? DiscordNative is absent in the
+            // popout, so enumerate every other route before picking a fallback.
+            log("   popout API require:", typeof win.require,
+                "| process:", typeof win.process,
+                "| electron:", typeof win.electron,
+                "| docPiP:", typeof win.documentPictureInPicture,
+                "| opener:", !!win.opener);
+            const g: any = globalThis as any;
+            log("   host  API  require:", typeof g.require,
+                "| DiscordNative:", typeof g.DiscordNative,
+                "| DN.window.setAlwaysOnTop:", typeof g.DiscordNative?.window?.setAlwaysOnTop,
+                "| docPiP:", typeof g.documentPictureInPicture);
+            try {
+                const el = typeof g.require === "function" ? g.require("electron") : null;
+                log("   electron   keys:", el ? Object.keys(el).join(",") : "(not loadable)");
+            } catch (e: any) { log("   electron   require threw:", e?.message); }
         }
     }
 
