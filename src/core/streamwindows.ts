@@ -31,11 +31,9 @@ const OVERLAY_POLL_MS = 1500;
 /** get/setLocalVolume context for Go Live audio (vs "default" voice audio) */
 const STREAM_CTX = "stream";
 
-/** picture-in-picture window size and gap from the screen edge, in px */
-const PIP_W = 480, PIP_H = 270, PIP_MARGIN = 16;
+/** picture-in-picture window size, in px */
+const PIP_W = 480, PIP_H = 270;
 
-type Corner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
-const CORNERS: Corner[] = ["bottom-right", "bottom-left", "top-left", "top-right"];
 
 const OVERLAY_ID = "streamwindows-overlay";
 const STREAM_KEY_RE = /^DISCORD_CALL_TILE_POPOUT_\d+_((?:guild|call):.+)$/;
@@ -201,164 +199,100 @@ export function createStreamWindows(P: Platform): StreamWindows {
 
     // ---- picture-in-picture -------------------------------------------------
     /*
-     * Snap a popout to a screen corner at a small fixed size and pin it above
-     * other windows.
+     * Always-on-top via Discord is a dead end. Measured, not guessed:
+     *   - popoutModule.setAlwaysOnTop flips PopoutWindowStore's flag and nothing
+     *     floats, whether set live or preset before the window is recreated
+     *   - the popout window exposes no DiscordNative / require / process / electron
+     *   - require("electron") in the host renderer yields only
+     *     ipcRenderer, shell, webUtils — there is no BrowserWindow to reach
+     *   - win.focus() does not raise it
      *
-     * Reach: always-on-top covers normal windows, borderless/windowed-fullscreen
-     * games, and fullscreen video players. It CANNOT cover a game in exclusive
-     * fullscreen — that game owns the display outright, which is precisely why
-     * Discord ships a separate injected game overlay (discord_overlay2). Nothing
-     * we can do from a BrowserWindow changes that; the fix is borderless mode in
-     * the game.
+     * What IS available in the popout is documentPictureInPicture. A Document
+     * PiP window is always-on-top by construction rather than by request, so it
+     * cannot fail the same way. We leave Discord's video element alone and just
+     * point a second <video> at the same MediaStream — no React surgery, no
+     * re-encode. Each popout is its own document, so the one-PiP-per-document
+     * limit still allows one per stream.
+     *
+     * Tradeoff: a Document PiP window is placed and sized by the browser, so we
+     * cannot snap it to a corner programmatically. Drag it once; Chromium
+     * remembers where you put it.
      */
 
-    /** work area of whichever screen the window currently sits on */
-    function workArea(win: any) {
-        const sc = win.screen ?? {};
-        return {
-            left: sc.availLeft ?? 0,
-            top: sc.availTop ?? 0,
-            width: sc.availWidth ?? 1920,
-            height: sc.availHeight ?? 1080
-        };
-    }
-
-    function nearestCorner(win: any): Corner {
-        const a = workArea(win);
-        const cx = (win.screenX ?? 0) + (win.outerWidth ?? PIP_W) / 2;
-        const cy = (win.screenY ?? 0) + (win.outerHeight ?? PIP_H) / 2;
-        const vert = cy < a.top + a.height / 2 ? "top" : "bottom";
-        const horiz = cx < a.left + a.width / 2 ? "left" : "right";
-        return `${vert}-${horiz}` as Corner;
-    }
-
-    function snapToCorner(win: any, corner: Corner) {
-        const a = workArea(win);
-        const x = corner.endsWith("right") ? a.left + a.width - PIP_W - PIP_MARGIN : a.left + PIP_MARGIN;
-        const y = corner.startsWith("bottom") ? a.top + a.height - PIP_H - PIP_MARGIN : a.top + PIP_MARGIN;
+    /** the <video> the popout is already decoding into */
+    function popoutVideo(win: any): HTMLVideoElement | null {
         try {
-            win.resizeTo(PIP_W, PIP_H);
-            win.moveTo(x, y);
-            // moving a window programmatically does not raise it, so without this
-            // the "pinned" window can end up behind whatever had focus
-            win.focus?.();
-        } catch (e: any) { log("snapToCorner threw", e?.message); }
+            const vids = Array.from(win.document.querySelectorAll("video")) as HTMLVideoElement[];
+            return vids.filter(v => (v as any).srcObject)
+                .sort((x, y) => y.videoWidth * y.videoHeight - x.videoWidth * x.videoHeight)[0] ?? null;
+        } catch { return null; }
     }
 
-    const isPip = (win: any) => !!win?.__swPip;
+    const pipWindowOf = (win: any) => {
+        const p = win?.__swPipWin;
+        return p && !p.closed ? p : null;
+    };
+    const isPip = (win: any) => !!pipWindowOf(win);
 
-    function setAlwaysOnTopFor(windowKey: string, win: any, on: boolean) {
-        const tried: string[] = [];
+    async function enterPip(win: any, streamKey: string, windowKey: string) {
+        if (isPip(win)) return;
+        const dpip = win.documentPictureInPicture;
+        if (!dpip?.requestWindow) return log("documentPictureInPicture unavailable in popout");
 
-        // 1. Discord's own action — also persists the flag in PopoutWindowStore
-        try { popoutModule()?.setAlwaysOnTop?.(windowKey, on); tried.push("popout.setAlwaysOnTop"); }
-        catch (e: any) { log("popout.setAlwaysOnTop threw", e?.message); }
+        const src = popoutVideo(win);
+        if (!src) return log("no decoding <video> in the popout yet — is the stream showing?");
 
-        // 2. the popout's own native window handle. Signature is undocumented, so
-        //    try (bool) and, for Electron's levelled form, (bool, level).
-        const dn = win?.DiscordNative?.window;
-        if (dn?.setAlwaysOnTop) {
-            try { dn.setAlwaysOnTop(on); tried.push("DiscordNative(bool)"); }
-            catch (e: any) { log("DiscordNative.setAlwaysOnTop(bool) threw", e?.message); }
-            try { dn.setAlwaysOnTop(on, on ? "screen-saver" : "normal"); tried.push("DiscordNative(bool,level)"); }
-            catch { /* single-arg form only */ }
+        let pip: any;
+        try {
+            // needs a user gesture in THIS document; the pin click is one
+            pip = await dpip.requestWindow({ width: PIP_W, height: PIP_H });
+        } catch (e: any) {
+            return log("requestWindow rejected:", e?.name, e?.message);
         }
 
-        const readBack = (() => {
-            try { return popoutStore()?.getIsAlwaysOnTop?.(windowKey); } catch { return "?"; }
-        })();
-        log("alwaysOnTop", on, "via", tried.join(" + ") || "NOTHING", "| store says:", readBack);
+        pip.document.body.style.cssText = "margin:0;background:#000;overflow:hidden";
+        const v = pip.document.createElement("video");
+        v.autoplay = true;
+        v.muted = true;          // audio keeps flowing through Discord's own pipeline
+        v.playsInline = true;
+        v.style.cssText = "width:100vw;height:100vh;object-fit:contain;background:#000";
+        v.srcObject = (src as any).srcObject;
+        pip.document.body.appendChild(v);
+        v.play?.().catch((e: any) => log("pip video play() rejected:", e?.message));
+
+        win.__swPipWin = pip;
+        mountOverlay(pip, streamKey, windowKey);   // same controls inside the PiP window
+        pip.addEventListener("pagehide", () => {
+            win.__swPipWin = null;
+            refreshOverlayState(win);
+            log("pip closed by user");
+        });
+        log("pip open:", PIP_W + "x" + PIP_H, "for", streamKey);
+        refreshOverlayState(win);
     }
 
-    /** turn PiP on (snapping to `corner`, default: nearest) or off (restore bounds) */
-    function setPip(windowKey: string, on: boolean, corner?: Corner) {
+    function exitPip(win: any) {
+        const pip = pipWindowOf(win);
+        win.__swPipWin = null;
+        try { pip?.close(); } catch { /* already gone */ }
+        refreshOverlayState(win);
+        log("pip closed");
+    }
+
+    function togglePip(windowKey: string) {
         const win = windowFor(windowKey);
         if (!win) return log("no window for", windowKey);
-
-        const wasPinned = !!win.__swPip;
-        if (on) {
-            if (!win.__swPip) {
-                win.__swPrevBounds = {
-                    x: win.screenX, y: win.screenY,
-                    w: win.outerWidth, h: win.outerHeight
-                };
-            }
-            const c = corner ?? win.__swPipCorner ?? CORNERS[0];
-            win.__swPip = true;
-            win.__swPipCorner = c;
-            snapToCorner(win, c);
-            setAlwaysOnTopFor(windowKey, win, true);
-            log("pip on:", windowKey, c);
-            // live setAlwaysOnTop does not float the window; recreate it with the
-            // flag already set. Only on the initial pin, not on corner changes.
-            if (!wasPinned) reopenWithAlwaysOnTop(windowKey, c);
-        } else {
-            win.__swPip = false;
-            setAlwaysOnTopFor(windowKey, win, false);
-            const b = win.__swPrevBounds;
-            if (b) {
-                try { win.resizeTo(b.w, b.h); win.moveTo(b.x, b.y); }
-                catch (e: any) { log("restore bounds threw", e?.message); }
-            }
-            log("pip off:", windowKey);
-        }
-        refreshOverlayState(win);
-        pipDiag();   // capture the geometry every toggle, so a console isn't needed
-    }
-
-    const KEY_RE = /^DISCORD_CALL_TILE_POPOUT_(\d+)_((?:guild|call):.+)$/;
-
-    /*
-     * Discord records alwaysOnTop per window key next to that window's saved
-     * bounds, which suggests the flag is read when the BrowserWindow is created
-     * rather than applied live — calling setAlwaysOnTop on an open window flips
-     * the store but never floats it. So: set the flag, close the popout, and
-     * reopen it so it is constructed with the flag already set.
-     */
-    function reopenWithAlwaysOnTop(windowKey: string, corner: Corner) {
-        const m = KEY_RE.exec(windowKey);
+        const m = STREAM_KEY_RE.exec(windowKey);
         if (!m) return log("cannot parse window key:", windowKey);
-        const [, channelId, participantId] = m;
-        const P0 = popoutModule();
-
-        try { P0?.setAlwaysOnTop?.(windowKey, true); } catch { /* noop */ }
-        log("reopening for always-on-top:", channelId, participantId);
-        try { P0?.close?.(windowKey); } catch (e: any) { log("close threw", e?.message); }
-
-        setTimeout(() => {
-            try { P0?.openCallTilePopout?.(channelId, participantId); }
-            catch (e: any) { return log("reopen threw", e?.message); }
-            // wait for the new window, then place it and report what we got
-            setTimeout(() => {
-                const win = windowFor(windowKey);
-                if (!win) return log("reopened window not found for", windowKey);
-                win.__swPip = true;
-                win.__swPipCorner = corner;
-                snapToCorner(win, corner);
-                overlayTick();
-                log("after reopen: store alwaysOnTop =", (() => {
-                    try { return popoutStore()?.getIsAlwaysOnTop?.(windowKey); } catch { return "?"; }
-                })());
-            }, 1200);
-        }, 350);
-    }
-
-    const togglePip = (windowKey: string) => setPip(windowKey, !isPip(windowFor(windowKey)));
-
-    /** move an already-PiP window to the next corner clockwise */
-    function cyclePipCorner(windowKey: string) {
-        const win = windowFor(windowKey);
-        if (!win) return;
-        const cur = win.__swPipCorner ?? nearestCorner(win);
-        const next = CORNERS[(CORNERS.indexOf(cur) + 1) % CORNERS.length];
-        setPip(windowKey, true, next);
+        if (isPip(win)) exitPip(win);
+        else void enterPip(win, m[1], windowKey);
     }
 
     /** re-sync overlay button appearance after state changes from elsewhere */
     function refreshOverlayState(win: any) {
         try { win?.__swRefresh?.(); } catch { /* overlay not mounted */ }
+        try { pipWindowOf(win)?.__swRefresh?.(); } catch { /* no pip */ }
     }
-
 
     // ---- in-window control overlay -----------------------------------------
     function mountOverlay(win: any, streamKey: string, windowKey: string) {
@@ -382,7 +316,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
             `</div>` +
             `<div class="sw-btns">` +
                 `<button class="sw-vol" title="Mute / volume"></button>` +
-                `<button class="sw-pip" title="Picture-in-picture — click to pin, click again to move it around the corners, shift-click to unpin">📌</button>` +
+                `<button class="sw-pip" title="Picture-in-picture — a small always-on-top window. Drag it where you want it.">📌</button>` +
                 `<button class="sw-fs" title="Fullscreen (or double-click video)">⛶</button>` +
             `</div>`;
         doc.body.appendChild(el);
@@ -401,7 +335,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
         const reflectPip = () => pipBtn.classList.toggle("sw-on", isPip(win));
         reflectMute();
         reflectPip();
-        // setPip() calls this so the button stays in sync when toggled from the
+        // refreshOverlayState() calls this so the button stays in sync when
         // context menu or console rather than from this button
         win.__swRefresh = () => { reflectMute(); reflectPip(); };
 
@@ -422,12 +356,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
          * corner is reachable without knowing a modifier key exists.
          * Shift-click still exits immediately from any corner.
          */
-        pipBtn.addEventListener("click", (ev: any) => {
-            if (ev.shiftKey) { setPip(windowKey, false); return; }
-            if (!isPip(win)) setPip(windowKey, true, CORNERS[0]);
-            else if (win.__swPipCorner === CORNERS[CORNERS.length - 1]) setPip(windowKey, false);
-            else cyclePipCorner(windowKey);
-        });
+        pipBtn.addEventListener("click", () => togglePip(windowKey));
         (el.querySelector(".sw-fs") as HTMLElement)
             .addEventListener("click", () => toggleWinFullscreen(win));
 
@@ -593,16 +522,13 @@ export function createStreamWindows(P: Platform): StreamWindows {
             const win = windowFor(k);
             if (!win) { log(k, "-> no window object"); continue; }
             const sc = win.screen ?? {};
-            const a = workArea(win);
             log("window:", k);
             log("   position   screenX/Y:", win.screenX, win.screenY,
                 "| outer:", win.outerWidth + "x" + win.outerHeight,
                 "| inner:", win.innerWidth + "x" + win.innerHeight);
             log("   screen     avail L/T/W/H:", sc.availLeft, sc.availTop, sc.availWidth, sc.availHeight,
                 "| full:", sc.width + "x" + sc.height);
-            log("   workArea   ->", a);
-            log("   corner     nearest:", nearestCorner(win), "| remembered:", win.__swPipCorner ?? "(none)");
-            log("   pip state  __swPip:", !!win.__swPip, "| prevBounds:", win.__swPrevBounds ?? "(none)");
+            log("   pip window open:", isPip(win));
             log("   alwaysTop  store:", (() => {
                 try { return popoutStore()?.getIsAlwaysOnTop?.(k); } catch { return "threw"; }
             })());
@@ -693,8 +619,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
         debug: {
             popOut, popAllInConnectedChannel, closeAll, closeFor, setAlwaysOnTop,
             dumpKeys, discover, overlayTick, toggleFullscreen, ensureWatching, inspectChrome,
-            setPip, togglePip, cyclePipCorner, snapToCorner, isPip, pipDiag,
-            nearestCorner, workArea,
+            togglePip, isPip, pipDiag, popoutVideo,
             getVolume, setVolume, isMuted, toggleMute,
             streamKeyOf, streamForUser, streamState, connectedVoiceChannelId,
             liveKeys, windowFor, existingWindowKey,

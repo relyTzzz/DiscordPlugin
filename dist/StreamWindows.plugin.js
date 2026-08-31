@@ -12,8 +12,6 @@ var OVERLAY_POLL_MS = 1500;
 var STREAM_CTX = "stream";
 var PIP_W = 480;
 var PIP_H = 270;
-var PIP_MARGIN = 16;
-var CORNERS = ["bottom-right", "bottom-left", "top-left", "top-right"];
 var OVERLAY_ID = "streamwindows-overlay";
 var STREAM_KEY_RE = /^DISCORD_CALL_TILE_POPOUT_\d+_((?:guild|call):.+)$/;
 var OVERLAY_CSS = `
@@ -152,154 +150,75 @@ function createStreamWindows(P) {
     }
   }
   const toggleFullscreen = (windowKey) => toggleWinFullscreen(windowFor(windowKey));
-  function workArea(win) {
-    const sc = win.screen ?? {};
-    return {
-      left: sc.availLeft ?? 0,
-      top: sc.availTop ?? 0,
-      width: sc.availWidth ?? 1920,
-      height: sc.availHeight ?? 1080
-    };
-  }
-  function nearestCorner(win) {
-    const a = workArea(win);
-    const cx = (win.screenX ?? 0) + (win.outerWidth ?? PIP_W) / 2;
-    const cy = (win.screenY ?? 0) + (win.outerHeight ?? PIP_H) / 2;
-    const vert = cy < a.top + a.height / 2 ? "top" : "bottom";
-    const horiz = cx < a.left + a.width / 2 ? "left" : "right";
-    return `${vert}-${horiz}`;
-  }
-  function snapToCorner(win, corner) {
-    const a = workArea(win);
-    const x = corner.endsWith("right") ? a.left + a.width - PIP_W - PIP_MARGIN : a.left + PIP_MARGIN;
-    const y = corner.startsWith("bottom") ? a.top + a.height - PIP_H - PIP_MARGIN : a.top + PIP_MARGIN;
+  function popoutVideo(win) {
     try {
-      win.resizeTo(PIP_W, PIP_H);
-      win.moveTo(x, y);
-      win.focus?.();
-    } catch (e) {
-      log("snapToCorner threw", e?.message);
+      const vids = Array.from(win.document.querySelectorAll("video"));
+      return vids.filter((v) => v.srcObject).sort((x, y) => y.videoWidth * y.videoHeight - x.videoWidth * x.videoHeight)[0] ?? null;
+    } catch {
+      return null;
     }
   }
-  const isPip = (win) => !!win?.__swPip;
-  function setAlwaysOnTopFor(windowKey, win, on) {
-    const tried = [];
+  const pipWindowOf = (win) => {
+    const p = win?.__swPipWin;
+    return p && !p.closed ? p : null;
+  };
+  const isPip = (win) => !!pipWindowOf(win);
+  async function enterPip(win, streamKey, windowKey) {
+    if (isPip(win)) return;
+    const dpip = win.documentPictureInPicture;
+    if (!dpip?.requestWindow) return log("documentPictureInPicture unavailable in popout");
+    const src = popoutVideo(win);
+    if (!src) return log("no decoding <video> in the popout yet \u2014 is the stream showing?");
+    let pip;
     try {
-      popoutModule()?.setAlwaysOnTop?.(windowKey, on);
-      tried.push("popout.setAlwaysOnTop");
+      pip = await dpip.requestWindow({ width: PIP_W, height: PIP_H });
     } catch (e) {
-      log("popout.setAlwaysOnTop threw", e?.message);
+      return log("requestWindow rejected:", e?.name, e?.message);
     }
-    const dn = win?.DiscordNative?.window;
-    if (dn?.setAlwaysOnTop) {
-      try {
-        dn.setAlwaysOnTop(on);
-        tried.push("DiscordNative(bool)");
-      } catch (e) {
-        log("DiscordNative.setAlwaysOnTop(bool) threw", e?.message);
-      }
-      try {
-        dn.setAlwaysOnTop(on, on ? "screen-saver" : "normal");
-        tried.push("DiscordNative(bool,level)");
-      } catch {
-      }
-    }
-    const readBack = (() => {
-      try {
-        return popoutStore()?.getIsAlwaysOnTop?.(windowKey);
-      } catch {
-        return "?";
-      }
-    })();
-    log("alwaysOnTop", on, "via", tried.join(" + ") || "NOTHING", "| store says:", readBack);
-  }
-  function setPip(windowKey, on, corner) {
-    const win = windowFor(windowKey);
-    if (!win) return log("no window for", windowKey);
-    const wasPinned = !!win.__swPip;
-    if (on) {
-      if (!win.__swPip) {
-        win.__swPrevBounds = {
-          x: win.screenX,
-          y: win.screenY,
-          w: win.outerWidth,
-          h: win.outerHeight
-        };
-      }
-      const c = corner ?? win.__swPipCorner ?? CORNERS[0];
-      win.__swPip = true;
-      win.__swPipCorner = c;
-      snapToCorner(win, c);
-      setAlwaysOnTopFor(windowKey, win, true);
-      log("pip on:", windowKey, c);
-      if (!wasPinned) reopenWithAlwaysOnTop(windowKey, c);
-    } else {
-      win.__swPip = false;
-      setAlwaysOnTopFor(windowKey, win, false);
-      const b = win.__swPrevBounds;
-      if (b) {
-        try {
-          win.resizeTo(b.w, b.h);
-          win.moveTo(b.x, b.y);
-        } catch (e) {
-          log("restore bounds threw", e?.message);
-        }
-      }
-      log("pip off:", windowKey);
-    }
+    pip.document.body.style.cssText = "margin:0;background:#000;overflow:hidden";
+    const v = pip.document.createElement("video");
+    v.autoplay = true;
+    v.muted = true;
+    v.playsInline = true;
+    v.style.cssText = "width:100vw;height:100vh;object-fit:contain;background:#000";
+    v.srcObject = src.srcObject;
+    pip.document.body.appendChild(v);
+    v.play?.().catch((e) => log("pip video play() rejected:", e?.message));
+    win.__swPipWin = pip;
+    mountOverlay(pip, streamKey, windowKey);
+    pip.addEventListener("pagehide", () => {
+      win.__swPipWin = null;
+      refreshOverlayState(win);
+      log("pip closed by user");
+    });
+    log("pip open:", PIP_W + "x" + PIP_H, "for", streamKey);
     refreshOverlayState(win);
-    pipDiag();
   }
-  const KEY_RE = /^DISCORD_CALL_TILE_POPOUT_(\d+)_((?:guild|call):.+)$/;
-  function reopenWithAlwaysOnTop(windowKey, corner) {
-    const m = KEY_RE.exec(windowKey);
-    if (!m) return log("cannot parse window key:", windowKey);
-    const [, channelId, participantId] = m;
-    const P0 = popoutModule();
+  function exitPip(win) {
+    const pip = pipWindowOf(win);
+    win.__swPipWin = null;
     try {
-      P0?.setAlwaysOnTop?.(windowKey, true);
+      pip?.close();
     } catch {
     }
-    log("reopening for always-on-top:", channelId, participantId);
-    try {
-      P0?.close?.(windowKey);
-    } catch (e) {
-      log("close threw", e?.message);
-    }
-    setTimeout(() => {
-      try {
-        P0?.openCallTilePopout?.(channelId, participantId);
-      } catch (e) {
-        return log("reopen threw", e?.message);
-      }
-      setTimeout(() => {
-        const win = windowFor(windowKey);
-        if (!win) return log("reopened window not found for", windowKey);
-        win.__swPip = true;
-        win.__swPipCorner = corner;
-        snapToCorner(win, corner);
-        overlayTick();
-        log("after reopen: store alwaysOnTop =", (() => {
-          try {
-            return popoutStore()?.getIsAlwaysOnTop?.(windowKey);
-          } catch {
-            return "?";
-          }
-        })());
-      }, 1200);
-    }, 350);
+    refreshOverlayState(win);
+    log("pip closed");
   }
-  const togglePip = (windowKey) => setPip(windowKey, !isPip(windowFor(windowKey)));
-  function cyclePipCorner(windowKey) {
+  function togglePip(windowKey) {
     const win = windowFor(windowKey);
-    if (!win) return;
-    const cur = win.__swPipCorner ?? nearestCorner(win);
-    const next = CORNERS[(CORNERS.indexOf(cur) + 1) % CORNERS.length];
-    setPip(windowKey, true, next);
+    if (!win) return log("no window for", windowKey);
+    const m = STREAM_KEY_RE.exec(windowKey);
+    if (!m) return log("cannot parse window key:", windowKey);
+    if (isPip(win)) exitPip(win);
+    else void enterPip(win, m[1], windowKey);
   }
   function refreshOverlayState(win) {
     try {
       win?.__swRefresh?.();
+    } catch {
+    }
+    try {
+      pipWindowOf(win)?.__swRefresh?.();
     } catch {
     }
   }
@@ -315,7 +234,7 @@ function createStreamWindows(P) {
     const vol = Math.round(getVolume(streamKey));
     const el = doc.createElement("div");
     el.id = OVERLAY_ID;
-    el.innerHTML = `<div class="sw-pop"><input type="range" min="0" max="200" step="1" value="${vol}"><span class="sw-val">${vol}%</span></div><div class="sw-btns"><button class="sw-vol" title="Mute / volume"></button><button class="sw-pip" title="Picture-in-picture \u2014 click to pin, click again to move it around the corners, shift-click to unpin">\u{1F4CC}</button><button class="sw-fs" title="Fullscreen (or double-click video)">\u26F6</button></div>`;
+    el.innerHTML = `<div class="sw-pop"><input type="range" min="0" max="200" step="1" value="${vol}"><span class="sw-val">${vol}%</span></div><div class="sw-btns"><button class="sw-vol" title="Mute / volume"></button><button class="sw-pip" title="Picture-in-picture \u2014 a small always-on-top window. Drag it where you want it.">\u{1F4CC}</button><button class="sw-fs" title="Fullscreen (or double-click video)">\u26F6</button></div>`;
     doc.body.appendChild(el);
     const range = el.querySelector("input");
     const valEl = el.querySelector(".sw-val");
@@ -342,15 +261,7 @@ function createStreamWindows(P) {
       toggleMute(streamKey);
       setTimeout(reflectMute, 60);
     });
-    pipBtn.addEventListener("click", (ev) => {
-      if (ev.shiftKey) {
-        setPip(windowKey, false);
-        return;
-      }
-      if (!isPip(win)) setPip(windowKey, true, CORNERS[0]);
-      else if (win.__swPipCorner === CORNERS[CORNERS.length - 1]) setPip(windowKey, false);
-      else cyclePipCorner(windowKey);
-    });
+    pipBtn.addEventListener("click", () => togglePip(windowKey));
     el.querySelector(".sw-fs").addEventListener("click", () => toggleWinFullscreen(win));
     if (!win.__swDblBound) {
       win.__swDblBound = true;
@@ -508,7 +419,6 @@ function createStreamWindows(P) {
         continue;
       }
       const sc = win.screen ?? {};
-      const a = workArea(win);
       log("window:", k);
       log(
         "   position   screenX/Y:",
@@ -528,9 +438,7 @@ function createStreamWindows(P) {
         "| full:",
         sc.width + "x" + sc.height
       );
-      log("   workArea   ->", a);
-      log("   corner     nearest:", nearestCorner(win), "| remembered:", win.__swPipCorner ?? "(none)");
-      log("   pip state  __swPip:", !!win.__swPip, "| prevBounds:", win.__swPrevBounds ?? "(none)");
+      log("   pip window open:", isPip(win));
       log("   alwaysTop  store:", (() => {
         try {
           return popoutStore()?.getIsAlwaysOnTop?.(k);
@@ -637,14 +545,10 @@ function createStreamWindows(P) {
       toggleFullscreen,
       ensureWatching,
       inspectChrome,
-      setPip,
       togglePip,
-      cyclePipCorner,
-      snapToCorner,
       isPip,
       pipDiag,
-      nearestCorner,
-      workArea,
+      popoutVideo,
       getVolume,
       setVolume,
       isMuted,
