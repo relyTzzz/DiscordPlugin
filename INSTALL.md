@@ -10,9 +10,6 @@ Takes about two minutes. You only do this once.
 ## Before you start
 
 - **Desktop Discord only.** This does not work in a browser.
-- **If you have Vencord, uninstall it first.** Vencord and BetterDiscord modify
-  the same Discord file and will break each other. (Vencord users: run its
-  installer and choose *Uninstall*.)
 - Only the people **watching** need this. Whoever is streaming doesn't need
   anything.
 
@@ -31,7 +28,7 @@ the left sidebar.
 
 1. Get the file **`StreamWindows.plugin.js`** (whoever sent you this has it).
    If it arrived as a `.zip`, unzip it first — you need the `.js` file itself.
-2. In Discord: **Settings → Plugins → Open Plugins Folder**.
+2. In Discord: **Settings → BetterDiscord → Plugins → Open Plugins Folder**.
    A folder opens.
 3. **Drag `StreamWindows.plugin.js` into that folder.**
 
@@ -48,18 +45,15 @@ Done.
 ## What you're looking for
 
 Join a voice channel where someone is streaming, then **right-click them** —
-either their name in the voice channel list, or their video tile:
+on their video tile and click **Pop Out Stream**:
 
 ![Right-clicking a streamer in Discord](docs/pop-out-menu.png)
 
-> ⚠️ **Don't click the item boxed in red.** That one is Discord's *own* "Pop Out
-> Stream", which only gives you a single small window.
->
-> Scroll further down the same menu to **"Pop Out Stream to Window"** — that's
-> this plugin, and it's the one that gives every streamer their own window.
 
 Repeat for each person you want to watch. Each gets its own window you can drag
-to any monitor.
+to any monitor:
+
+![Two Discord streams in separate desktop windows](docs/two-streams-windowed.png)
 
 ---
 
@@ -76,6 +70,3 @@ it in the same folder, replace the old one, and restart Discord.
 
 ---
 
-*This is an unofficial Discord modification and isn't affiliated with Discord.
-Client mods are against Discord's Terms of Service; in practice nobody gets
-actioned for using them, but you should know that before installing.*
