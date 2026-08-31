@@ -68,6 +68,33 @@ raw dispatch updates the store while leaving audio unchanged.
    which one Discord actually reads; narrow it once verified.
 5. Nice-to-have: "spread windows across monitors" command.
 
+## Architecture: one source, two client mods
+
+`src/core/streamwindows.ts` holds **all** behaviour and depends only on
+`src/core/platform.ts` (a ~5-method interface: getByProps / getByCode / getStore
+/ find / log). Two thin adapters implement it:
+
+- `src/StreamWindows/index.tsx` — Vencord (this path is the junction target, do
+  not move it)
+- `src/bd/entry.ts` — BetterDiscord, built by `scripts/build-bd.mjs` into
+  `dist/StreamWindows.plugin.js`
+
+**Put new logic in core, never in an adapter.** Adapters only translate APIs and
+render the `MenuEntry[]` that `core.menuEntriesFor(props)` returns.
+
+This works because the plugin declares **zero webpack patches** — it only does
+read-only module lookup plus one context-menu item, which is why it ports across
+client mods cheaply.
+
+Why BD exists at all: Vencord globs `src/userplugins` at *build* time
+(`scripts/build/common.mjs:148`) and has no runtime plugin loading, so ordinary
+Vencord users cannot install this without building Vencord from source. BD loads
+a single file from a folder.
+
+Commands: `npm run build:bd`, `npm run install:bd`, `npm run watch:bd`,
+`npm run typecheck` (scoped to core+bd; checking the Vencord adapter drags in
+Vencord's whole source and floods errors).
+
 ## Dev loop
 
 - Vencord checkout: `C:\Users\theta\Documents\Dev\Vencord` (sibling; untouched

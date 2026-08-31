@@ -58,7 +58,33 @@ live:   DISCORD_CALL_TILE_POPOUT_<channelId>_<streamKey>
 bounds: DISCORD_CALL_TILE_POPOUT_<channelId>_<userId>  -> {x,y,width,height,alwaysOnTop}
 ```
 
-## Install / dev
+## Install — BetterDiscord (easy, for other people)
+
+BetterDiscord loads plugins at runtime from a folder, so there's no build step
+for the person installing.
+
+1. Install [BetterDiscord](https://betterdiscord.app) (one-click installer).
+2. Drop `StreamWindows.plugin.js` into:
+   - Windows: `%APPDATA%\BetterDiscord\plugins`
+   - macOS: `~/Library/Application Support/BetterDiscord/plugins`
+   - Linux: `~/.config/BetterDiscord/plugins`
+3. Enable **StreamWindows** in Settings → Plugins.
+
+To produce that file:
+
+```powershell
+npm install
+npm run build:bd       # -> dist/StreamWindows.plugin.js
+npm run install:bd     # build + copy straight into your BD plugins folder
+npm run watch:bd       # rebuild + reinstall on every save
+```
+
+> Vencord **cannot** do this. Its build globs `src/userplugins` at compile time
+> (`scripts/build/common.mjs`) and has no runtime plugin loading, so a Vencord
+> user who installed it normally has no folder to drop this into — they'd have to
+> build Vencord from source. That's why the BetterDiscord build exists.
+
+## Install — Vencord (dev)
 
 Prereqs: Node 20+, `pnpm` (`npm i -g pnpm`), git.
 
@@ -88,13 +114,40 @@ Console helpers are exposed on `window.$sw` (`popOut`, `closeAll`, `dumpKeys`,
 
 ## Repo layout
 
+One source, two outputs. All behaviour lives in `src/core`; the adapters only
+map a client mod's API onto a tiny `Platform` interface and render menu rows.
+
 ```
-src/StreamWindows/index.tsx     the plugin
+src/core/platform.ts            the ~5-method interface an adapter must satisfy
+src/core/streamwindows.ts       ALL the logic — popout, watch, overlay, menu model
+src/StreamWindows/index.tsx     Vencord adapter (junction target; keep this path)
+src/bd/entry.ts                 BetterDiscord adapter
+scripts/build-bd.mjs            esbuild -> dist/StreamWindows.plugin.js (+ --install)
 scripts/link-into-vencord.mjs   junction-link into a Vencord checkout
 tsconfig.json                   @utils/@webpack aliases (baseUrl -> ../Vencord)
+tsconfig.check.json             typecheck scope: core + bd only (see its comment)
 spike/                          historical console probes from the feasibility
-                                phase; not used by the plugin
+                                phase; not used by either build
 ```
+
+Adding a feature means touching `src/core/streamwindows.ts` only. If you find
+yourself putting logic in an adapter, it belongs in core.
+
+| Platform method | Vencord | BetterDiscord |
+|---|---|---|
+| `getByProps` | `findByProps` | `Webpack.getByKeys` |
+| `getByCode` | `findByCode` | `getModule(Filters.byStrings(…), {searchExports:true})` |
+| `getStore` | `findStore` | `Webpack.getStore` |
+| `find` | `find` | `getModule(filter, {searchExports:true})` |
+| menu | `addContextMenuPatch` + `Menu.*` | `ContextMenu.patch` + `buildItem` |
+
+## Differences between the two builds
+
+- **Slash commands** (`/streamwindows`, `/streamwindows-discover`) are Vencord
+  only — BD has no command API. On BD use the context menu, or the console
+  helpers on `window.$sw` (`$sw.popAllInConnectedChannel()`, `$sw.discover()`).
+- Everything else — popping, the overlay, mute/volume/fullscreen — is identical,
+  because it's the same `src/core` code.
 
 ## Known gaps
 

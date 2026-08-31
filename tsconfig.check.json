@@ -1,0 +1,9 @@
+{
+  // Typechecks only the portable code (shared core + BetterDiscord adapter).
+  // The Vencord adapter is deliberately excluded: checking it pulls in the whole
+  // Vencord source through the path aliases, which needs Vencord's own build-time
+  // defines (IS_REPORTER, ~plugins, …) and floods the output with errors that
+  // aren't ours. Vencord's build typechecks that file in its own project.
+  "extends": "./tsconfig.json",
+  "include": ["src/core/**/*", "src/bd/**/*"]
+}

@@ -1,12 +1,20 @@
 {
   "name": "streamwindows",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
-  "description": "Vencord user plugin: pop each watched Discord stream into its own OS window for multi-monitor viewing.",
-  "type": "module",
+  "description": "Pop each watched Discord stream into its own OS window for multi-monitor viewing. Builds as a Vencord userplugin and a BetterDiscord plugin from one source.",
+  "//": "No \"type\":\"module\" — build scripts are .mjs (ESM regardless), and the BD output is CommonJS, which BD requires.",
   "scripts": {
-    "link": "node scripts/link-into-vencord.mjs",
-    "unlink": "node scripts/link-into-vencord.mjs --remove"
+    "build:bd": "node scripts/build-bd.mjs",
+    "watch:bd": "node scripts/build-bd.mjs --watch --install",
+    "install:bd": "node scripts/build-bd.mjs --install",
+    "link:vencord": "node scripts/link-into-vencord.mjs",
+    "unlink:vencord": "node scripts/link-into-vencord.mjs --remove",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
   },
   "author": "theta",
   "license": "GPL-3.0-or-later"
