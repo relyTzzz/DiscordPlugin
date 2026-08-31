@@ -3,9 +3,13 @@ node_modules/
 .DS_Store
 .vencord-path
 
-# Build output is ignored EXCEPT the BetterDiscord plugin: that single file is
-# what people install, so it's committed to make it downloadable from the repo.
+# Build output is ignored by default. Committed exceptions are the files that
+# get published to the public download repo (see scripts/publish-public.mjs):
+# the plugin, its README, and the README's screenshot. The bundle zip and
+# install-guide PDF stay ignored — rebuild them with `npm run bundle`.
 dist/*
 !dist/StreamWindows.plugin.js
+!dist/README.md
+!dist/two-streams-windowed.png
 # the shareable bundle is a build artifact — rebuild it with `npm run bundle`
 _bundle/

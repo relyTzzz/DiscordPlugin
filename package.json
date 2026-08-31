@@ -1,9 +1,15 @@
 {
   "name": "streamwindows",
-  "version": "1.1.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Pop each watched Discord stream into its own OS window for multi-monitor viewing. Builds as a Vencord userplugin and a BetterDiscord plugin from one source.",
   "//": "No \"type\":\"module\" — build scripts are .mjs (ESM regardless), and the BD output is CommonJS, which BD requires.",
+  "//repository": "This is the PUBLIC DOWNLOAD repo (source lives in the private tylerMCW/DiscordPlugin). build-bd.mjs derives @source and the self-updater's raw @updateUrl from it.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/relyTzzz/StreamWindows.git"
+  },
+  "homepage": "https://github.com/relyTzzz/StreamWindows#readme",
   "scripts": {
     "build:bd": "node scripts/build-bd.mjs",
     "watch:bd": "node scripts/build-bd.mjs --watch --install",
@@ -11,7 +17,9 @@
     "link:vencord": "node scripts/link-into-vencord.mjs",
     "unlink:vencord": "node scripts/link-into-vencord.mjs --remove",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
-    "bundle": "npm run build:bd && node scripts/build-bundle.mjs"
+    "bundle": "npm run build:bd && node scripts/build-bundle.mjs",
+    "bump": "node scripts/bump-version.mjs",
+    "publish:public": "npm run build:bd && node scripts/publish-public.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
