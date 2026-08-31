@@ -31,6 +31,12 @@ const OVERLAY_POLL_MS = 1500;
 /** get/setLocalVolume context for Go Live audio (vs "default" voice audio) */
 const STREAM_CTX = "stream";
 
+/** picture-in-picture window size and gap from the screen edge, in px */
+const PIP_W = 480, PIP_H = 270, PIP_MARGIN = 16;
+
+type Corner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+const CORNERS: Corner[] = ["bottom-right", "bottom-left", "top-left", "top-right"];
+
 const OVERLAY_ID = "streamwindows-overlay";
 const STREAM_KEY_RE = /^DISCORD_CALL_TILE_POPOUT_\d+_((?:guild|call):.+)$/;
 
@@ -193,8 +199,107 @@ export function createStreamWindows(P: Platform): StreamWindows {
 
     const toggleFullscreen = (windowKey: string) => toggleWinFullscreen(windowFor(windowKey));
 
+    // ---- picture-in-picture -------------------------------------------------
+    /*
+     * Snap a popout to a screen corner at a small fixed size and pin it above
+     * other windows.
+     *
+     * Reach: always-on-top covers normal windows, borderless/windowed-fullscreen
+     * games, and fullscreen video players. It CANNOT cover a game in exclusive
+     * fullscreen — that game owns the display outright, which is precisely why
+     * Discord ships a separate injected game overlay (discord_overlay2). Nothing
+     * we can do from a BrowserWindow changes that; the fix is borderless mode in
+     * the game.
+     */
+
+    /** work area of whichever screen the window currently sits on */
+    function workArea(win: any) {
+        const sc = win.screen ?? {};
+        return {
+            left: sc.availLeft ?? 0,
+            top: sc.availTop ?? 0,
+            width: sc.availWidth ?? 1920,
+            height: sc.availHeight ?? 1080
+        };
+    }
+
+    function nearestCorner(win: any): Corner {
+        const a = workArea(win);
+        const cx = (win.screenX ?? 0) + (win.outerWidth ?? PIP_W) / 2;
+        const cy = (win.screenY ?? 0) + (win.outerHeight ?? PIP_H) / 2;
+        const vert = cy < a.top + a.height / 2 ? "top" : "bottom";
+        const horiz = cx < a.left + a.width / 2 ? "left" : "right";
+        return `${vert}-${horiz}` as Corner;
+    }
+
+    function snapToCorner(win: any, corner: Corner) {
+        const a = workArea(win);
+        const x = corner.endsWith("right") ? a.left + a.width - PIP_W - PIP_MARGIN : a.left + PIP_MARGIN;
+        const y = corner.startsWith("bottom") ? a.top + a.height - PIP_H - PIP_MARGIN : a.top + PIP_MARGIN;
+        try { win.resizeTo(PIP_W, PIP_H); win.moveTo(x, y); }
+        catch (e: any) { log("snapToCorner threw", e?.message); }
+    }
+
+    const isPip = (win: any) => !!win?.__swPip;
+
+    function setAlwaysOnTopFor(windowKey: string, win: any, on: boolean) {
+        // Discord's own action — persists in PopoutWindowStore state
+        try { popoutModule()?.setAlwaysOnTop?.(windowKey, on); }
+        catch (e: any) { log("setAlwaysOnTop threw", e?.message); }
+        // belt and braces: the popout's own native window handle
+        try { win?.DiscordNative?.window?.setAlwaysOnTop?.(on); } catch { /* not exposed */ }
+    }
+
+    /** turn PiP on (snapping to `corner`, default: nearest) or off (restore bounds) */
+    function setPip(windowKey: string, on: boolean, corner?: Corner) {
+        const win = windowFor(windowKey);
+        if (!win) return log("no window for", windowKey);
+
+        if (on) {
+            if (!win.__swPip) {
+                win.__swPrevBounds = {
+                    x: win.screenX, y: win.screenY,
+                    w: win.outerWidth, h: win.outerHeight
+                };
+            }
+            const c = corner ?? win.__swPipCorner ?? nearestCorner(win);
+            win.__swPip = true;
+            win.__swPipCorner = c;
+            snapToCorner(win, c);
+            setAlwaysOnTopFor(windowKey, win, true);
+            log("pip on:", windowKey, c);
+        } else {
+            win.__swPip = false;
+            setAlwaysOnTopFor(windowKey, win, false);
+            const b = win.__swPrevBounds;
+            if (b) {
+                try { win.resizeTo(b.w, b.h); win.moveTo(b.x, b.y); }
+                catch (e: any) { log("restore bounds threw", e?.message); }
+            }
+            log("pip off:", windowKey);
+        }
+        refreshOverlayState(win);
+    }
+
+    const togglePip = (windowKey: string) => setPip(windowKey, !isPip(windowFor(windowKey)));
+
+    /** move an already-PiP window to the next corner clockwise */
+    function cyclePipCorner(windowKey: string) {
+        const win = windowFor(windowKey);
+        if (!win) return;
+        const cur = win.__swPipCorner ?? nearestCorner(win);
+        const next = CORNERS[(CORNERS.indexOf(cur) + 1) % CORNERS.length];
+        setPip(windowKey, true, next);
+    }
+
+    /** re-sync overlay button appearance after state changes from elsewhere */
+    function refreshOverlayState(win: any) {
+        try { win?.__swRefresh?.(); } catch { /* overlay not mounted */ }
+    }
+
+
     // ---- in-window control overlay -----------------------------------------
-    function mountOverlay(win: any, streamKey: string) {
+    function mountOverlay(win: any, streamKey: string, windowKey: string) {
         const doc = win?.document;
         if (!doc?.body || doc.getElementById(OVERLAY_ID)) return;
 
@@ -215,6 +320,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
             `</div>` +
             `<div class="sw-btns">` +
                 `<button class="sw-vol" title="Mute / volume"></button>` +
+                `<button class="sw-pip" title="Picture-in-picture: pin to a screen corner, always on top (shift-click to move corner)">📌</button>` +
                 `<button class="sw-fs" title="Fullscreen (or double-click video)">⛶</button>` +
             `</div>`;
         doc.body.appendChild(el);
@@ -223,12 +329,19 @@ export function createStreamWindows(P: Platform): StreamWindows {
         const valEl = el.querySelector(".sw-val") as HTMLElement;
         const volBtn = el.querySelector(".sw-vol") as HTMLElement;
 
+        const pipBtn = el.querySelector(".sw-pip") as HTMLElement;
+
         const reflectMute = () => {
             const muted = isMuted(streamKey);
             volBtn.textContent = muted ? "🔇" : "🔊";
             volBtn.classList.toggle("sw-on", muted);
         };
+        const reflectPip = () => pipBtn.classList.toggle("sw-on", isPip(win));
         reflectMute();
+        reflectPip();
+        // setPip() calls this so the button stays in sync when toggled from the
+        // context menu or console rather than from this button
+        win.__swRefresh = () => { reflectMute(); reflectPip(); };
 
         range.addEventListener("input", () => {
             const v = +range.value;
@@ -238,6 +351,11 @@ export function createStreamWindows(P: Platform): StreamWindows {
         volBtn.addEventListener("click", () => {
             toggleMute(streamKey);
             setTimeout(reflectMute, 60);
+        });
+        pipBtn.addEventListener("click", (ev: any) => {
+            // shift-click walks an already-pinned window around the corners
+            if (ev.shiftKey && isPip(win)) cyclePipCorner(windowKey);
+            else togglePip(windowKey);
         });
         (el.querySelector(".sw-fs") as HTMLElement)
             .addEventListener("click", () => toggleWinFullscreen(win));
@@ -260,7 +378,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
             if (!m) continue;
             const win = windowFor(k);
             if (win?.document?.body && !win.document.getElementById(OVERLAY_ID)) {
-                try { mountOverlay(win, m[1]); } catch (e: any) { log("mountOverlay threw", e?.message); }
+                try { mountOverlay(win, m[1], k); } catch (e: any) { log("mountOverlay threw", e?.message); }
             }
         }
     }
@@ -416,6 +534,11 @@ export function createStreamWindows(P: Platform): StreamWindows {
 
         if (winKey) {
             entries.push({
+                id: "streamwindows-pip",
+                label: isPip(windowFor(winKey)) ? "Exit Picture-in-Picture" : "Picture-in-Picture",
+                action: () => togglePip(winKey)
+            });
+            entries.push({
                 id: "streamwindows-fullscreen",
                 label: "Toggle Fullscreen",
                 action: () => toggleFullscreen(winKey)
@@ -452,6 +575,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
         debug: {
             popOut, popAllInConnectedChannel, closeAll, closeFor, setAlwaysOnTop,
             dumpKeys, discover, overlayTick, toggleFullscreen, ensureWatching, inspectChrome,
+            setPip, togglePip, cyclePipCorner, snapToCorner, isPip,
             getVolume, setVolume, isMuted, toggleMute,
             streamKeyOf, streamForUser, streamState, connectedVoiceChannelId,
             liveKeys, windowFor, existingWindowKey,

@@ -10,6 +10,10 @@
 var DECODE_WAIT_MS = 1300;
 var OVERLAY_POLL_MS = 1500;
 var STREAM_CTX = "stream";
+var PIP_W = 480;
+var PIP_H = 270;
+var PIP_MARGIN = 16;
+var CORNERS = ["bottom-right", "bottom-left", "top-left", "top-right"];
 var OVERLAY_ID = "streamwindows-overlay";
 var STREAM_KEY_RE = /^DISCORD_CALL_TILE_POPOUT_\d+_((?:guild|call):.+)$/;
 var OVERLAY_CSS = `
@@ -148,7 +152,95 @@ function createStreamWindows(P) {
     }
   }
   const toggleFullscreen = (windowKey) => toggleWinFullscreen(windowFor(windowKey));
-  function mountOverlay(win, streamKey) {
+  function workArea(win) {
+    const sc = win.screen ?? {};
+    return {
+      left: sc.availLeft ?? 0,
+      top: sc.availTop ?? 0,
+      width: sc.availWidth ?? 1920,
+      height: sc.availHeight ?? 1080
+    };
+  }
+  function nearestCorner(win) {
+    const a = workArea(win);
+    const cx = (win.screenX ?? 0) + (win.outerWidth ?? PIP_W) / 2;
+    const cy = (win.screenY ?? 0) + (win.outerHeight ?? PIP_H) / 2;
+    const vert = cy < a.top + a.height / 2 ? "top" : "bottom";
+    const horiz = cx < a.left + a.width / 2 ? "left" : "right";
+    return `${vert}-${horiz}`;
+  }
+  function snapToCorner(win, corner) {
+    const a = workArea(win);
+    const x = corner.endsWith("right") ? a.left + a.width - PIP_W - PIP_MARGIN : a.left + PIP_MARGIN;
+    const y = corner.startsWith("bottom") ? a.top + a.height - PIP_H - PIP_MARGIN : a.top + PIP_MARGIN;
+    try {
+      win.resizeTo(PIP_W, PIP_H);
+      win.moveTo(x, y);
+    } catch (e) {
+      log("snapToCorner threw", e?.message);
+    }
+  }
+  const isPip = (win) => !!win?.__swPip;
+  function setAlwaysOnTopFor(windowKey, win, on) {
+    try {
+      popoutModule()?.setAlwaysOnTop?.(windowKey, on);
+    } catch (e) {
+      log("setAlwaysOnTop threw", e?.message);
+    }
+    try {
+      win?.DiscordNative?.window?.setAlwaysOnTop?.(on);
+    } catch {
+    }
+  }
+  function setPip(windowKey, on, corner) {
+    const win = windowFor(windowKey);
+    if (!win) return log("no window for", windowKey);
+    if (on) {
+      if (!win.__swPip) {
+        win.__swPrevBounds = {
+          x: win.screenX,
+          y: win.screenY,
+          w: win.outerWidth,
+          h: win.outerHeight
+        };
+      }
+      const c = corner ?? win.__swPipCorner ?? nearestCorner(win);
+      win.__swPip = true;
+      win.__swPipCorner = c;
+      snapToCorner(win, c);
+      setAlwaysOnTopFor(windowKey, win, true);
+      log("pip on:", windowKey, c);
+    } else {
+      win.__swPip = false;
+      setAlwaysOnTopFor(windowKey, win, false);
+      const b = win.__swPrevBounds;
+      if (b) {
+        try {
+          win.resizeTo(b.w, b.h);
+          win.moveTo(b.x, b.y);
+        } catch (e) {
+          log("restore bounds threw", e?.message);
+        }
+      }
+      log("pip off:", windowKey);
+    }
+    refreshOverlayState(win);
+  }
+  const togglePip = (windowKey) => setPip(windowKey, !isPip(windowFor(windowKey)));
+  function cyclePipCorner(windowKey) {
+    const win = windowFor(windowKey);
+    if (!win) return;
+    const cur = win.__swPipCorner ?? nearestCorner(win);
+    const next = CORNERS[(CORNERS.indexOf(cur) + 1) % CORNERS.length];
+    setPip(windowKey, true, next);
+  }
+  function refreshOverlayState(win) {
+    try {
+      win?.__swRefresh?.();
+    } catch {
+    }
+  }
+  function mountOverlay(win, streamKey, windowKey) {
     const doc = win?.document;
     if (!doc?.body || doc.getElementById(OVERLAY_ID)) return;
     if (!doc.getElementById(OVERLAY_ID + "-css")) {
@@ -160,17 +252,24 @@ function createStreamWindows(P) {
     const vol = Math.round(getVolume(streamKey));
     const el = doc.createElement("div");
     el.id = OVERLAY_ID;
-    el.innerHTML = `<div class="sw-pop"><input type="range" min="0" max="200" step="1" value="${vol}"><span class="sw-val">${vol}%</span></div><div class="sw-btns"><button class="sw-vol" title="Mute / volume"></button><button class="sw-fs" title="Fullscreen (or double-click video)">\u26F6</button></div>`;
+    el.innerHTML = `<div class="sw-pop"><input type="range" min="0" max="200" step="1" value="${vol}"><span class="sw-val">${vol}%</span></div><div class="sw-btns"><button class="sw-vol" title="Mute / volume"></button><button class="sw-pip" title="Picture-in-picture: pin to a screen corner, always on top (shift-click to move corner)">\u{1F4CC}</button><button class="sw-fs" title="Fullscreen (or double-click video)">\u26F6</button></div>`;
     doc.body.appendChild(el);
     const range = el.querySelector("input");
     const valEl = el.querySelector(".sw-val");
     const volBtn = el.querySelector(".sw-vol");
+    const pipBtn = el.querySelector(".sw-pip");
     const reflectMute = () => {
       const muted = isMuted(streamKey);
       volBtn.textContent = muted ? "\u{1F507}" : "\u{1F50A}";
       volBtn.classList.toggle("sw-on", muted);
     };
+    const reflectPip = () => pipBtn.classList.toggle("sw-on", isPip(win));
     reflectMute();
+    reflectPip();
+    win.__swRefresh = () => {
+      reflectMute();
+      reflectPip();
+    };
     range.addEventListener("input", () => {
       const v = +range.value;
       setVolume(streamKey, v);
@@ -179,6 +278,10 @@ function createStreamWindows(P) {
     volBtn.addEventListener("click", () => {
       toggleMute(streamKey);
       setTimeout(reflectMute, 60);
+    });
+    pipBtn.addEventListener("click", (ev) => {
+      if (ev.shiftKey && isPip(win)) cyclePipCorner(windowKey);
+      else togglePip(windowKey);
     });
     el.querySelector(".sw-fs").addEventListener("click", () => toggleWinFullscreen(win));
     if (!win.__swDblBound) {
@@ -196,7 +299,7 @@ function createStreamWindows(P) {
       const win = windowFor(k);
       if (win?.document?.body && !win.document.getElementById(OVERLAY_ID)) {
         try {
-          mountOverlay(win, m[1]);
+          mountOverlay(win, m[1], k);
         } catch (e) {
           log("mountOverlay threw", e?.message);
         }
@@ -345,6 +448,11 @@ function createStreamWindows(P) {
     }];
     if (winKey) {
       entries.push({
+        id: "streamwindows-pip",
+        label: isPip(windowFor(winKey)) ? "Exit Picture-in-Picture" : "Picture-in-Picture",
+        action: () => togglePip(winKey)
+      });
+      entries.push({
         id: "streamwindows-fullscreen",
         label: "Toggle Fullscreen",
         action: () => toggleFullscreen(winKey)
@@ -387,6 +495,11 @@ function createStreamWindows(P) {
       toggleFullscreen,
       ensureWatching,
       inspectChrome,
+      setPip,
+      togglePip,
+      cyclePipCorner,
+      snapToCorner,
+      isPip,
       getVolume,
       setVolume,
       isMuted,
