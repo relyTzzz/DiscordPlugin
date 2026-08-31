@@ -597,18 +597,17 @@ var LOG_FILE = (() => {
     return null;
   }
 })();
-var logStarted = false;
+var logBuffer = [`=== StreamWindows ${(/* @__PURE__ */ new Date()).toISOString()} ===`];
+var logFailed = false;
 function toFile(line) {
-  if (!LOG_FILE) return;
+  if (!LOG_FILE || logFailed) return;
+  logBuffer.push(line);
+  if (logBuffer.length > 2e3) logBuffer.splice(1, logBuffer.length - 2e3);
   try {
-    const fs = require("fs");
-    if (!logStarted) {
-      logStarted = true;
-      fs.writeFileSync(LOG_FILE, `=== StreamWindows ${(/* @__PURE__ */ new Date()).toISOString()} ===
-`);
-    }
-    fs.appendFileSync(LOG_FILE, line + "\n");
-  } catch {
+    require("fs").writeFileSync(LOG_FILE, logBuffer.join("\n") + "\n");
+  } catch (e) {
+    logFailed = true;
+    console.warn("[StreamWindows] file logging disabled:", e);
   }
 }
 var fmt = (a) => {

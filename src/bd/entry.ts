@@ -32,18 +32,21 @@ const LOG_FILE = (() => {
     } catch { return null; }
 })();
 
-let logStarted = false;
+const logBuffer: string[] = [`=== StreamWindows ${new Date().toISOString()} ===`];
+let logFailed = false;
+
+/** Rewrite the whole log each time — an append that half-fails is worse than a
+ *  slightly wasteful rewrite, and this file only ever holds a session's lines. */
 function toFile(line: string) {
-    if (!LOG_FILE) return;
+    if (!LOG_FILE || logFailed) return;
+    logBuffer.push(line);
+    if (logBuffer.length > 2000) logBuffer.splice(1, logBuffer.length - 2000);
     try {
-        const fs = require("fs");
-        // truncate once per session so the file stays readable
-        if (!logStarted) {
-            logStarted = true;
-            fs.writeFileSync(LOG_FILE, `=== StreamWindows ${new Date().toISOString()} ===\n`);
-        }
-        fs.appendFileSync(LOG_FILE, line + "\n");
-    } catch { /* fs unavailable; console only */ }
+        require("fs").writeFileSync(LOG_FILE, logBuffer.join("\n") + "\n");
+    } catch (e) {
+        logFailed = true;   // stop retrying a write that cannot work
+        console.warn("[StreamWindows] file logging disabled:", e);
+    }
 }
 
 const fmt = (a: any) => {
