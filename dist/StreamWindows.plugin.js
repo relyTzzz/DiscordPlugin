@@ -245,6 +245,7 @@ function createStreamWindows(P) {
       log("pip off:", windowKey);
     }
     refreshOverlayState(win);
+    pipDiag();
   }
   const togglePip = (windowKey) => setPip(windowKey, !isPip(windowFor(windowKey)));
   function cyclePipCorner(windowKey) {
@@ -587,6 +588,37 @@ function createStreamWindows(P) {
 // src/bd/entry.ts
 var W = () => BdApi.Webpack;
 var F = () => BdApi.Webpack.Filters;
+var LOG_FILE = (() => {
+  try {
+    const path = require("path");
+    const dir = BdApi?.Plugins?.folder ?? path.join(process.env.APPDATA || "", "BetterDiscord", "plugins");
+    return path.join(dir, "StreamWindows.log");
+  } catch {
+    return null;
+  }
+})();
+var logStarted = false;
+function toFile(line) {
+  if (!LOG_FILE) return;
+  try {
+    const fs = require("fs");
+    if (!logStarted) {
+      logStarted = true;
+      fs.writeFileSync(LOG_FILE, `=== StreamWindows ${(/* @__PURE__ */ new Date()).toISOString()} ===
+`);
+    }
+    fs.appendFileSync(LOG_FILE, line + "\n");
+  } catch {
+  }
+}
+var fmt = (a) => {
+  if (typeof a === "string") return a;
+  try {
+    return JSON.stringify(a);
+  } catch {
+    return String(a);
+  }
+};
 var platform = {
   getByProps: (...props) => W().getByKeys(...props),
   // BD's byStrings matches module source, same idea as Vencord's findByCode.
@@ -594,7 +626,10 @@ var platform = {
   getByCode: (...code) => W().getModule(F().byStrings(...code), { searchExports: true }),
   getStore: (name) => W().getStore(name),
   find: (filter) => W().getModule(filter, { searchExports: true }),
-  log: (...a) => console.log("%c[StreamWindows]", "color:#5865F2;font-weight:bold", ...a)
+  log: (...a) => {
+    console.log("%c[StreamWindows]", "color:#5865F2;font-weight:bold", ...a);
+    toFile(a.map(fmt).join(" "));
+  }
 };
 var sw = createStreamWindows(platform);
 var NAV_IDS = ["user-context", "stream-context"];

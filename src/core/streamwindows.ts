@@ -294,6 +294,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
             log("pip off:", windowKey);
         }
         refreshOverlayState(win);
+        pipDiag();   // capture the geometry every toggle, so a console isn't needed
     }
 
     const togglePip = (windowKey: string) => setPip(windowKey, !isPip(windowFor(windowKey)));

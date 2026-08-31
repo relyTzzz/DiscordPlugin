@@ -18,6 +18,39 @@ declare const module: { exports: any; };
 const W = () => BdApi.Webpack;
 const F = () => BdApi.Webpack.Filters;
 
+/*
+ * BD plugins run with Node available, so mirror every log line to a file next to
+ * the plugin. Discord's DevTools can be awkward to open; this makes diagnostics
+ * readable without a console. Best-effort — if fs isn't reachable we just log.
+ */
+const LOG_FILE = (() => {
+    try {
+        const path = require("path");
+        const dir = BdApi?.Plugins?.folder
+            ?? path.join(process.env.APPDATA || "", "BetterDiscord", "plugins");
+        return path.join(dir, "StreamWindows.log");
+    } catch { return null; }
+})();
+
+let logStarted = false;
+function toFile(line: string) {
+    if (!LOG_FILE) return;
+    try {
+        const fs = require("fs");
+        // truncate once per session so the file stays readable
+        if (!logStarted) {
+            logStarted = true;
+            fs.writeFileSync(LOG_FILE, `=== StreamWindows ${new Date().toISOString()} ===\n`);
+        }
+        fs.appendFileSync(LOG_FILE, line + "\n");
+    } catch { /* fs unavailable; console only */ }
+}
+
+const fmt = (a: any) => {
+    if (typeof a === "string") return a;
+    try { return JSON.stringify(a); } catch { return String(a); }
+};
+
 const platform: Platform = {
     getByProps: (...props) => W().getByKeys(...props),
     // BD's byStrings matches module source, same idea as Vencord's findByCode.
@@ -25,8 +58,14 @@ const platform: Platform = {
     getByCode: (...code) => W().getModule(F().byStrings(...code), { searchExports: true }),
     getStore: name => W().getStore(name),
     find: filter => W().getModule(filter, { searchExports: true }),
-    log: (...a) => console.log("%c[StreamWindows]", "color:#5865F2;font-weight:bold", ...a)
+    log: (...a) => {
+        console.log("%c[StreamWindows]", "color:#5865F2;font-weight:bold", ...a);
+        toFile(a.map(fmt).join(" "));
+    }
 };
+
+declare const require: (m: string) => any;
+declare const process: any;
 
 const sw = createStreamWindows(platform);
 
