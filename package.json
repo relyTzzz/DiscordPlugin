@@ -10,10 +10,12 @@
     "install:bd": "node scripts/build-bd.mjs --install",
     "link:vencord": "node scripts/link-into-vencord.mjs",
     "unlink:vencord": "node scripts/link-into-vencord.mjs --remove",
-    "typecheck": "tsc --noEmit -p tsconfig.check.json"
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "bundle": "npm run build:bd && node scripts/build-bundle.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
+    "marked": "^18.0.11",
     "typescript": "^5.6.0"
   },
   "author": "theta",

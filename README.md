@@ -92,7 +92,14 @@ npm install
 npm run build:bd       # -> dist/StreamWindows.plugin.js
 npm run install:bd     # build + copy straight into your BD plugins folder
 npm run watch:bd       # rebuild + reinstall on every save
+npm run bundle         # -> dist/StreamWindows-v<version>.zip, to send to someone
 ```
+
+`npm run bundle` produces one zip holding the plugin and a PDF of
+[INSTALL.md](INSTALL.md) — the single file to hand a friend. The PDF is rendered
+with whichever Chromium-based browser is already installed (Edge ships with
+Windows), so there's no headless-browser download; if none is found it falls back
+to including the Markdown.
 
 > Vencord **cannot** do this. Its build globs `src/userplugins` at compile time
 > (`scripts/build/common.mjs`) and has no runtime plugin loading, so a Vencord
