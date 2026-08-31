@@ -68,7 +68,7 @@ const CSS = `
   a { color: #3b49df; text-decoration: none; }
 `;
 
-function renderPdf(outPdf) {
+async function renderPdf(outPdf) {
     const browser = findBrowser();
     if (!browser) {
         console.warn("! No Chromium-based browser found (Edge/Chrome) — cannot render the PDF.");
@@ -97,6 +97,24 @@ ${marked.parse(readFileSync(guideMd, "utf8"))}`;
             // ERR_FILE_NOT_FOUND and prints its error page instead
             pathToFileURL(tmpHtml).href
         ], { stdio: "ignore", timeout: 120000 });
+
+        /*
+         * The launcher process exits before rendering finishes, so returning here
+         * and deleting the temp HTML is a race the browser loses — it then prints
+         * its own "file not found" page into the PDF. Wait for the file to appear
+         * and stop growing before letting the caller clean up.
+         */
+        const deadline = Date.now() + 60000;
+        let lastSize = -1, stable = 0;
+        while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 250));
+            if (!existsSync(outPdf)) continue;
+            const size = statSync(outPdf).size;
+            stable = size > 0 && size === lastSize ? stable + 1 : 0;
+            lastSize = size;
+            if (stable >= 3) return outPdf;      // ~750ms unchanged
+        }
+        console.warn("! PDF did not finish rendering within 60s");
         return existsSync(outPdf) ? outPdf : null;
     } catch (e) {
         console.warn("! PDF render failed:", e.message);
@@ -113,7 +131,7 @@ ${marked.parse(readFileSync(guideMd, "utf8"))}`;
 
 mkdirSync(dist, { recursive: true });
 const pdf = join(dist, "StreamWindows - Install Guide.pdf");
-const madePdf = renderPdf(pdf);
+const madePdf = await renderPdf(pdf);
 if (madePdf) console.log("rendered", pdf);
 else console.warn("! Shipping INSTALL.md instead of a PDF.");
 
