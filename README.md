@@ -1,8 +1,11 @@
 # StreamWindows
 
-A Vencord user plugin that pops each watched Discord stream into its **own OS
-window**, so several simultaneous streams can be spread across multiple monitors
-and fullscreened independently.
+A Discord plugin that pops each watched stream into its **own OS window**, so
+several simultaneous streams can be spread across multiple monitors and
+fullscreened independently.
+
+Ships as a **BetterDiscord** plugin (drop-in, what most people want) and as a
+**Vencord** userplugin (dev), built from one shared source.
 
 **Status: working.** Right-click a streamer in your voice channel → *Pop Out
 Stream to Window*. Repeat per streamer for one window each.
@@ -59,6 +62,9 @@ bounds: DISCORD_CALL_TILE_POPOUT_<channelId>_<userId>  -> {x,y,width,height,alwa
 ```
 
 ## Install (for users)
+
+> Sending this to someone? Point them at **[INSTALL.md](INSTALL.md)** — a
+> plain-language walkthrough with troubleshooting, written for non-developers.
 
 No build step — BetterDiscord loads plugins from a folder.
 
