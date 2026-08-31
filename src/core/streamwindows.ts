@@ -236,8 +236,13 @@ export function createStreamWindows(P: Platform): StreamWindows {
         const a = workArea(win);
         const x = corner.endsWith("right") ? a.left + a.width - PIP_W - PIP_MARGIN : a.left + PIP_MARGIN;
         const y = corner.startsWith("bottom") ? a.top + a.height - PIP_H - PIP_MARGIN : a.top + PIP_MARGIN;
-        try { win.resizeTo(PIP_W, PIP_H); win.moveTo(x, y); }
-        catch (e: any) { log("snapToCorner threw", e?.message); }
+        try {
+            win.resizeTo(PIP_W, PIP_H);
+            win.moveTo(x, y);
+            // moving a window programmatically does not raise it, so without this
+            // the "pinned" window can end up behind whatever had focus
+            win.focus?.();
+        } catch (e: any) { log("snapToCorner threw", e?.message); }
     }
 
     const isPip = (win: any) => !!win?.__swPip;
@@ -270,6 +275,7 @@ export function createStreamWindows(P: Platform): StreamWindows {
         const win = windowFor(windowKey);
         if (!win) return log("no window for", windowKey);
 
+        const wasPinned = !!win.__swPip;
         if (on) {
             if (!win.__swPip) {
                 win.__swPrevBounds = {
@@ -283,6 +289,9 @@ export function createStreamWindows(P: Platform): StreamWindows {
             snapToCorner(win, c);
             setAlwaysOnTopFor(windowKey, win, true);
             log("pip on:", windowKey, c);
+            // live setAlwaysOnTop does not float the window; recreate it with the
+            // flag already set. Only on the initial pin, not on corner changes.
+            if (!wasPinned) reopenWithAlwaysOnTop(windowKey, c);
         } else {
             win.__swPip = false;
             setAlwaysOnTopFor(windowKey, win, false);
@@ -295,6 +304,43 @@ export function createStreamWindows(P: Platform): StreamWindows {
         }
         refreshOverlayState(win);
         pipDiag();   // capture the geometry every toggle, so a console isn't needed
+    }
+
+    const KEY_RE = /^DISCORD_CALL_TILE_POPOUT_(\d+)_((?:guild|call):.+)$/;
+
+    /*
+     * Discord records alwaysOnTop per window key next to that window's saved
+     * bounds, which suggests the flag is read when the BrowserWindow is created
+     * rather than applied live — calling setAlwaysOnTop on an open window flips
+     * the store but never floats it. So: set the flag, close the popout, and
+     * reopen it so it is constructed with the flag already set.
+     */
+    function reopenWithAlwaysOnTop(windowKey: string, corner: Corner) {
+        const m = KEY_RE.exec(windowKey);
+        if (!m) return log("cannot parse window key:", windowKey);
+        const [, channelId, participantId] = m;
+        const P0 = popoutModule();
+
+        try { P0?.setAlwaysOnTop?.(windowKey, true); } catch { /* noop */ }
+        log("reopening for always-on-top:", channelId, participantId);
+        try { P0?.close?.(windowKey); } catch (e: any) { log("close threw", e?.message); }
+
+        setTimeout(() => {
+            try { P0?.openCallTilePopout?.(channelId, participantId); }
+            catch (e: any) { return log("reopen threw", e?.message); }
+            // wait for the new window, then place it and report what we got
+            setTimeout(() => {
+                const win = windowFor(windowKey);
+                if (!win) return log("reopened window not found for", windowKey);
+                win.__swPip = true;
+                win.__swPipCorner = corner;
+                snapToCorner(win, corner);
+                overlayTick();
+                log("after reopen: store alwaysOnTop =", (() => {
+                    try { return popoutStore()?.getIsAlwaysOnTop?.(windowKey); } catch { return "?"; }
+                })());
+            }, 1200);
+        }, 350);
     }
 
     const togglePip = (windowKey: string) => setPip(windowKey, !isPip(windowFor(windowKey)));

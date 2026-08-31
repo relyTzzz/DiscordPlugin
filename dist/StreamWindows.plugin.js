@@ -176,6 +176,7 @@ function createStreamWindows(P) {
     try {
       win.resizeTo(PIP_W, PIP_H);
       win.moveTo(x, y);
+      win.focus?.();
     } catch (e) {
       log("snapToCorner threw", e?.message);
     }
@@ -215,6 +216,7 @@ function createStreamWindows(P) {
   function setPip(windowKey, on, corner) {
     const win = windowFor(windowKey);
     if (!win) return log("no window for", windowKey);
+    const wasPinned = !!win.__swPip;
     if (on) {
       if (!win.__swPip) {
         win.__swPrevBounds = {
@@ -230,6 +232,7 @@ function createStreamWindows(P) {
       snapToCorner(win, c);
       setAlwaysOnTopFor(windowKey, win, true);
       log("pip on:", windowKey, c);
+      if (!wasPinned) reopenWithAlwaysOnTop(windowKey, c);
     } else {
       win.__swPip = false;
       setAlwaysOnTopFor(windowKey, win, false);
@@ -246,6 +249,45 @@ function createStreamWindows(P) {
     }
     refreshOverlayState(win);
     pipDiag();
+  }
+  const KEY_RE = /^DISCORD_CALL_TILE_POPOUT_(\d+)_((?:guild|call):.+)$/;
+  function reopenWithAlwaysOnTop(windowKey, corner) {
+    const m = KEY_RE.exec(windowKey);
+    if (!m) return log("cannot parse window key:", windowKey);
+    const [, channelId, participantId] = m;
+    const P0 = popoutModule();
+    try {
+      P0?.setAlwaysOnTop?.(windowKey, true);
+    } catch {
+    }
+    log("reopening for always-on-top:", channelId, participantId);
+    try {
+      P0?.close?.(windowKey);
+    } catch (e) {
+      log("close threw", e?.message);
+    }
+    setTimeout(() => {
+      try {
+        P0?.openCallTilePopout?.(channelId, participantId);
+      } catch (e) {
+        return log("reopen threw", e?.message);
+      }
+      setTimeout(() => {
+        const win = windowFor(windowKey);
+        if (!win) return log("reopened window not found for", windowKey);
+        win.__swPip = true;
+        win.__swPipCorner = corner;
+        snapToCorner(win, corner);
+        overlayTick();
+        log("after reopen: store alwaysOnTop =", (() => {
+          try {
+            return popoutStore()?.getIsAlwaysOnTop?.(windowKey);
+          } catch {
+            return "?";
+          }
+        })());
+      }, 1200);
+    }, 350);
   }
   const togglePip = (windowKey) => setPip(windowKey, !isPip(windowFor(windowKey)));
   function cyclePipCorner(windowKey) {
