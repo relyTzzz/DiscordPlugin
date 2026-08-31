@@ -1,5 +1,9 @@
 node_modules/
-dist/
 *.log
 .DS_Store
 .vencord-path
+
+# Build output is ignored EXCEPT the BetterDiscord plugin: that single file is
+# what people install, so it's committed to make it downloadable from the repo.
+dist/*
+!dist/StreamWindows.plugin.js

@@ -58,19 +58,28 @@ live:   DISCORD_CALL_TILE_POPOUT_<channelId>_<streamKey>
 bounds: DISCORD_CALL_TILE_POPOUT_<channelId>_<userId>  -> {x,y,width,height,alwaysOnTop}
 ```
 
-## Install — BetterDiscord (easy, for other people)
+## Install (for users)
 
-BetterDiscord loads plugins at runtime from a folder, so there's no build step
-for the person installing.
+No build step — BetterDiscord loads plugins from a folder.
 
-1. Install [BetterDiscord](https://betterdiscord.app) (one-click installer).
-2. Drop `StreamWindows.plugin.js` into:
+1. **Install [BetterDiscord](https://betterdiscord.app)** and run its installer.
+   ⚠️ If you already run **Vencord**, uninstall it first — both replace the same
+   Discord file and cannot coexist.
+2. **Download `StreamWindows.plugin.js`** (in [`dist/`](dist/)).
+3. **Put it in your plugins folder** — in Discord: Settings → Plugins → *Open
+   Plugins Folder*. Or manually:
    - Windows: `%APPDATA%\BetterDiscord\plugins`
    - macOS: `~/Library/Application Support/BetterDiscord/plugins`
    - Linux: `~/.config/BetterDiscord/plugins`
-3. Enable **StreamWindows** in Settings → Plugins.
+4. **Enable "StreamWindows"** in Settings → Plugins.
 
-To produce that file:
+Then: join a voice channel, right-click someone who's streaming, and pick
+**Pop Out Stream to Window**.
+
+Desktop Discord only. Updates are manual — replace the file and restart Discord
+(BetterDiscord only auto-updates plugins published to its own store).
+
+## Build it yourself
 
 ```powershell
 npm install

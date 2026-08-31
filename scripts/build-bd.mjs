@@ -23,13 +23,27 @@ const install = process.argv.includes("--install");
 const OUT_NAME = "StreamWindows.plugin.js";
 const outfile = join(root, "dist", OUT_NAME);
 
+/*
+ * BD's documented meta fields: name/author/description/version are required;
+ * invite, authorId, authorLink, donate, patreon, website, source are optional.
+ * There is no @updateUrl — BD only auto-updates addons from its own store, so a
+ * side-loaded copy of this does not self-update.
+ *
+ * @source/@website are emitted only if package.json actually declares them, so
+ * we never ship a link that doesn't exist.
+ */
+const repoUrl = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
+const optional = [
+    repoUrl && ` * @source ${repoUrl.replace(/^git\+/, "").replace(/\.git$/, "")}`,
+    pkg.homepage && ` * @website ${pkg.homepage}`
+].filter(Boolean).join("\n");
+
 const meta = `/**
  * @name StreamWindows
- * @author theta
- * @description Pop each watched Discord stream into its own OS window, so multiple streams can live on separate monitors. Right-click a streamer in voice to pop them out.
+ * @author ${pkg.author}
+ * @description ${pkg.description.split(" Builds as")[0]}
  * @version ${pkg.version}
- * @source https://github.com/theta/StreamWindows
- */
+${optional ? optional + "\n" : ""} */
 `;
 
 /** %APPDATA%\\BetterDiscord\\plugins on Windows, XDG/Library elsewhere */
