@@ -4,7 +4,7 @@
   "private": true,
   "description": "Pop each watched Discord stream into its own OS window for multi-monitor viewing. Builds as a Vencord userplugin and a BetterDiscord plugin from one source.",
   "//": "No \"type\":\"module\" — build scripts are .mjs (ESM regardless), and the BD output is CommonJS, which BD requires.",
-  "//repository": "This is the PUBLIC DOWNLOAD repo (source lives in the private tylerMCW/DiscordPlugin). build-bd.mjs derives @source and the self-updater's raw @updateUrl from it.",
+  "//repository": "This is the PUBLIC DOWNLOAD repo (source lives in the private relyTzzz/DiscordPlugin). build-bd.mjs derives @source and the self-updater's raw @updateUrl from it.",
   "repository": {
     "type": "git",
     "url": "https://github.com/relyTzzz/StreamWindows.git"
