@@ -57,19 +57,30 @@ Volume/mute go through `setLocalVolume(id, v, "stream")` /
 directly: `setLocalVolume` dispatches it *and* applies to the media engine, so a
 raw dispatch updates the store while leaving audio unchanged.
 
-### Public download repo
+### Public download repo + self-update
 
 `github.com/relyTzzz/StreamWindows` — three files (the plugin, a short README,
 the screenshot), what BD users actually download. It's a sibling checkout at
 `../StreamWindows`; `npm run publish:public -- --push` copies the built `dist/`
 files there, commits, and pushes. `.gitignore` keeps `dist/*` ignored except
-those three. `scripts/build-bd.mjs` emits `@source` / `@website` in the meta
-from `package.json` `repository` / `homepage`.
+those three.
 
-No self-update: BD only auto-updates addons published to its own store, so a
-side-loaded copy does not self-update. An in-plugin self-updater was built and
-then removed (2026-08-30) — deliberately not going down that road again; users
-re-download from the repo.
+BetterDiscord only auto-updates addons published to *its* store — `@updateUrl`
+is not a field BD acts on — so `src/bd/self-update.ts` does it manually: on
+`start()` it fetches its own raw file from that repo, compares `@version`, and on
+the user's confirm overwrites the installed `.plugin.js` (BD's file watcher
+reloads it). Silent when current or on network failure. Manual trigger:
+`$sw.checkForUpdates()`. (Built in 1.3.0, removed in 1.4.0, restored in 1.5.0 —
+the on-by-default confirm-then-overwrite behaviour is what the user wants.)
+
+`scripts/build-bd.mjs` derives `@source` / `@website` / `@updateUrl` from
+`package.json` `repository` / `homepage`, and injects `__SW_VERSION__` /
+`__SW_UPDATE_URL__` via esbuild `define` (one derivation, kept in sync with the
+meta). `external: ["fs","path"]` is set so esbuild leaves the imported module's
+`require()` calls as runtime calls rather than trying to bundle them. Still
+`TODO(verify)` against live BD: `BdApi.Net.fetch`,
+`BdApi.Plugins.get(name).filename`, `BdApi.UI.showConfirmationModal`, file-watch
+reload.
 
 ## Always-on-top / PiP: ruled out (2026-08-31)
 
@@ -113,6 +124,12 @@ was bundled with always-on-top.
 
 **Put new logic in core, never in an adapter.** Adapters only translate APIs and
 render the `MenuEntry[]` that `core.menuEntriesFor(props)` returns.
+
+The one deliberate exception is `src/bd/self-update.ts` (see *Public download
+repo + self-update* above): every line of it is about BD's install model —
+plugins folder, `BdApi.Net`, file-watch reload — and has no Vencord meaning
+(Vencord ships its own updater), so it stays in the BD adapter. If a change
+would apply to both mods, it still belongs in core.
 
 This works because the plugin declares **zero webpack patches** — it only does
 read-only module lookup plus one context-menu item, which is why it ports across

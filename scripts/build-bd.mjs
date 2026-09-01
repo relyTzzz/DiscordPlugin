@@ -26,18 +26,26 @@ const outfile = join(root, "dist", OUT_NAME);
 /*
  * BD's documented meta fields: name/author/description/version are required;
  * invite, authorId, authorLink, donate, patreon, website, source are optional.
- * There is no @updateUrl — BD only auto-updates addons from its own store, so a
- * side-loaded copy of this does not self-update.
  *
- * @source/@website are emitted only if package.json actually declares them, so
- * we never ship a link that doesn't exist.
+ * @updateUrl is NOT a field BD acts on — the client only auto-updates addons
+ * published to its store. We still emit it, and the same raw URL is injected as
+ * __SW_UPDATE_URL__ below, because src/bd/self-update.ts does the update check
+ * itself for side-loaded installs.
+ *
+ * @source/@website/@updateUrl are emitted only if package.json declares a
+ * repository, so we never ship a link that doesn't exist.
  */
 const repoUrl = (typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url)
     ?.replace(/^git\+/, "").replace(/\.git$/, "");
+// https://github.com/<o>/<r>  ->  https://raw.githubusercontent.com/<o>/<r>/main/<file>
+const updateUrl = repoUrl
+    ? `${repoUrl.replace("github.com", "raw.githubusercontent.com")}/main/${OUT_NAME}`
+    : "";
 
 const optional = [
     repoUrl && ` * @source ${repoUrl}`,
-    pkg.homepage && ` * @website ${pkg.homepage}`
+    pkg.homepage && ` * @website ${pkg.homepage}`,
+    updateUrl && ` * @updateUrl ${updateUrl}`
 ].filter(Boolean).join("\n");
 
 const meta = `/**
@@ -75,9 +83,20 @@ const options = {
     format: "cjs",
     platform: "browser",
     target: ["esnext"],
+    // BD runs plugins in Electron, so Node builtins resolve at runtime. esbuild
+    // leaves the entry file's own require() calls alone but tries to bundle
+    // these when an imported module (src/bd/self-update.ts) uses them — mark
+    // them external so those stay as runtime require() too.
+    external: ["fs", "path"],
     // BD plugins are read by humans in the plugins folder; keep it legible.
     minify: false,
     banner: { js: meta },
+    // Consumed by src/bd/self-update.ts. Kept in sync with the @version /
+    // @updateUrl meta above by deriving from the same package.json.
+    define: {
+        __SW_VERSION__: JSON.stringify(pkg.version),
+        __SW_UPDATE_URL__: JSON.stringify(updateUrl)
+    },
     logLevel: "info"
 };
 
