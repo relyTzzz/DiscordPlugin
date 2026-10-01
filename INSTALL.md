@@ -27,7 +27,7 @@ the left sidebar.
 ## Step 2 — Add the plugin
 
 1. Get the file **`StreamWindows.plugin.js`** from
-   **https://streamwindows.web.app/download** (or from whoever sent you this).
+   **https://streamwindows.cranium-ai.com/download** (or from whoever sent you this).
    If it arrived as a `.zip`, unzip it first — you need the `.js` file itself.
 2. In Discord: **Settings → BetterDiscord → Plugins → Open Plugins Folder**.
    A folder opens.
@@ -66,7 +66,7 @@ download the new file from the same page, drop it in the same folder, and replac
 the old one.
 
 The full guide, with the window controls and troubleshooting, is at
-**https://streamwindows.web.app/guide**.
+**https://streamwindows.cranium-ai.com/guide**.
 
 ## Uninstalling
 

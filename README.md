@@ -7,9 +7,9 @@ fullscreened independently.
 Ships as a **BetterDiscord** plugin (drop-in, what most people want) and as a
 **Vencord** userplugin (dev), built from one shared source.
 
-**Site:** [streamwindows.web.app](https://streamwindows.web.app) — the
-[download page](https://streamwindows.web.app/download) and the
-[user guide](https://streamwindows.web.app/guide). Made by
+**Site:** [streamwindows.cranium-ai.com](https://streamwindows.cranium-ai.com) — the
+[download page](https://streamwindows.cranium-ai.com/download) and the
+[user guide](https://streamwindows.cranium-ai.com/guide). Made by
 [Cranium AI](https://cranium-ai.com). Free and open source under the
 [GPL-3.0-or-later](LICENSE).
 
@@ -78,7 +78,7 @@ No build step — BetterDiscord loads plugins from a folder.
    ⚠️ If you already run **Vencord**, uninstall it first — both replace the same
    Discord file and cannot coexist.
 2. **Download `StreamWindows.plugin.js`** from the
-   [download page](https://streamwindows.web.app/download) (or from [`dist/`](dist/)
+   [download page](https://streamwindows.cranium-ai.com/download) (or from [`dist/`](dist/)
    in this repo, or the [StreamWindows](https://github.com/relyTzzz/StreamWindows)
    download repo).
 3. **Put it in your plugins folder** — in Discord: Settings → Plugins → *Open

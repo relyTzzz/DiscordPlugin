@@ -6,4 +6,6 @@ fullscreened independently.
 
 ![Two streams, each in its own OS window](./two-streams-windowed.png)
 
+The download page and the user guide are at **https://streamwindows.cranium-ai.com**.
+
 

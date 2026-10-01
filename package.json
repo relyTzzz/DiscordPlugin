@@ -9,7 +9,7 @@
     "type": "git",
     "url": "https://github.com/relyTzzz/StreamWindows.git"
   },
-  "homepage": "https://streamwindows.web.app",
+  "homepage": "https://streamwindows.cranium-ai.com",
   "scripts": {
     "build:bd": "node scripts/build-bd.mjs",
     "watch:bd": "node scripts/build-bd.mjs --watch --install",
