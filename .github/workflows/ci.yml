@@ -1,0 +1,18 @@
+# Typecheck the portable code (core + BetterDiscord adapter) and build the plugin file. The
+# Vencord adapter is checked by Vencord's own build, not here (see tsconfig.check.json).
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build:bd

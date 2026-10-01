@@ -4,12 +4,12 @@
   "private": true,
   "description": "Pop each watched Discord stream into its own OS window for multi-monitor viewing. Builds as a Vencord userplugin and a BetterDiscord plugin from one source.",
   "//": "No \"type\":\"module\" — build scripts are .mjs (ESM regardless), and the BD output is CommonJS, which BD requires.",
-  "//repository": "This is the PUBLIC DOWNLOAD repo (source lives in the private relyTzzz/DiscordPlugin). build-bd.mjs derives @source and the self-updater's raw @updateUrl from it.",
+  "//repository": "The public DOWNLOAD repo, which BetterDiscord users install from and the self-updater polls; build-bd.mjs derives @source and the raw @updateUrl from it, so do not change it lightly. The source lives in relyTzzz/DiscordPlugin.",
   "repository": {
     "type": "git",
     "url": "https://github.com/relyTzzz/StreamWindows.git"
   },
-  "homepage": "https://github.com/relyTzzz/StreamWindows#readme",
+  "homepage": "https://streamwindows.web.app",
   "scripts": {
     "build:bd": "node scripts/build-bd.mjs",
     "watch:bd": "node scripts/build-bd.mjs --watch --install",
@@ -26,6 +26,6 @@
     "marked": "^18.0.11",
     "typescript": "^5.6.0"
   },
-  "author": "theta",
+  "author": "Cranium AI",
   "license": "GPL-3.0-or-later"
 }

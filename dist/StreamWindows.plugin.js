@@ -1,10 +1,10 @@
 /**
  * @name StreamWindows
- * @author theta
+ * @author Cranium AI
  * @description Pop each watched Discord stream into its own OS window for multi-monitor viewing.
  * @version 1.5.0
  * @source https://github.com/relyTzzz/StreamWindows
- * @website https://github.com/relyTzzz/StreamWindows#readme
+ * @website https://streamwindows.web.app
  * @updateUrl https://raw.githubusercontent.com/relyTzzz/StreamWindows/main/StreamWindows.plugin.js
  */
 

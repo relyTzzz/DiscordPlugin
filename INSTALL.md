@@ -26,7 +26,8 @@ the left sidebar.
 
 ## Step 2 — Add the plugin
 
-1. Get the file **`StreamWindows.plugin.js`** (whoever sent you this has it).
+1. Get the file **`StreamWindows.plugin.js`** from
+   **https://streamwindows.web.app/download** (or from whoever sent you this).
    If it arrived as a `.zip`, unzip it first — you need the `.js` file itself.
 2. In Discord: **Settings → BetterDiscord → Plugins → Open Plugins Folder**.
    A folder opens.
@@ -59,8 +60,13 @@ to any monitor:
 
 ## Updating
 
-There's no auto-update. When you're sent a newer `StreamWindows.plugin.js`, drop
-it in the same folder, replace the old one, and restart Discord.
+It updates itself: when Discord starts, StreamWindows checks for a newer version
+and asks whether to install it. Click **Update** and you're done. You can also
+download the new file from the same page, drop it in the same folder, and replace
+the old one.
+
+The full guide, with the window controls and troubleshooting, is at
+**https://streamwindows.web.app/guide**.
 
 ## Uninstalling
 

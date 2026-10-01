@@ -7,6 +7,12 @@ fullscreened independently.
 Ships as a **BetterDiscord** plugin (drop-in, what most people want) and as a
 **Vencord** userplugin (dev), built from one shared source.
 
+**Site:** [streamwindows.web.app](https://streamwindows.web.app) — the
+[download page](https://streamwindows.web.app/download) and the
+[user guide](https://streamwindows.web.app/guide). Made by
+[Cranium AI](https://cranium-ai.com). Free and open source under the
+[GPL-3.0-or-later](LICENSE).
+
 **Status: working.** Right-click a streamer in your voice channel → *Pop Out
 Stream to Window*. Repeat per streamer for one window each.
 
@@ -71,7 +77,10 @@ No build step — BetterDiscord loads plugins from a folder.
 1. **Install [BetterDiscord](https://betterdiscord.app)** and run its installer.
    ⚠️ If you already run **Vencord**, uninstall it first — both replace the same
    Discord file and cannot coexist.
-2. **Download `StreamWindows.plugin.js`** (in [`dist/`](dist/)).
+2. **Download `StreamWindows.plugin.js`** from the
+   [download page](https://streamwindows.web.app/download) (or from [`dist/`](dist/)
+   in this repo, or the [StreamWindows](https://github.com/relyTzzz/StreamWindows)
+   download repo).
 3. **Put it in your plugins folder** — in Discord: Settings → Plugins → *Open
    Plugins Folder*. Or manually:
    - Windows: `%APPDATA%\BetterDiscord\plugins`
@@ -82,8 +91,10 @@ No build step — BetterDiscord loads plugins from a folder.
 Then: join a voice channel, right-click someone who's streaming, and pick
 **Pop Out Stream to Window**.
 
-Desktop Discord only. Updates are manual — replace the file and restart Discord
-(BetterDiscord only auto-updates plugins published to its own store).
+Desktop Discord only. Updates take care of themselves: on start the plugin
+compares its version with the copy in the download repo and offers to replace
+itself (`src/bd/self-update.ts`); BetterDiscord only auto-updates plugins
+published to its own store, which is why that exists.
 
 ## Build it yourself
 
@@ -134,6 +145,19 @@ Discord. Re-injecting is only needed once.
 Console helpers are exposed on `window.$sw` (`popOut`, `closeAll`, `dumpKeys`,
 `discover`, …).
 
+## Releasing
+
+```powershell
+npm run bump patch                 # or minor / major / X.Y.Z: package.json, lockfile, dist header, then npm run bundle
+# commit
+npm run publish:public -- --push   # copy dist/ into the sibling ../StreamWindows checkout, commit, push
+```
+
+The download repo is what installed copies poll for updates and what the site's
+download page fetches, so a release is complete once that push lands; the site
+needs no deploy. Its `repository` URL in `package.json` feeds `@source` and the
+raw `@updateUrl` in the built header, so it must never move.
+
 ## Repo layout
 
 One source, two outputs. All behaviour lives in `src/core`; the adapters only
@@ -144,8 +168,11 @@ src/core/platform.ts            the ~5-method interface an adapter must satisfy
 src/core/streamwindows.ts       ALL the logic — popout, watch, overlay, menu model
 src/StreamWindows/index.tsx     Vencord adapter (junction target; keep this path)
 src/bd/entry.ts                 BetterDiscord adapter
+src/bd/self-update.ts           the BD-only self-updater (see Releasing)
 scripts/build-bd.mjs            esbuild -> dist/StreamWindows.plugin.js (+ --install)
 scripts/link-into-vencord.mjs   junction-link into a Vencord checkout
+scripts/publish-public.mjs      push dist/ to the public download repo
+scripts/bump-version.mjs        bump the version everywhere it is written
 tsconfig.json                   @utils/@webpack aliases (baseUrl -> ../Vencord)
 tsconfig.check.json             typecheck scope: core + bd only (see its comment)
 spike/                          historical console probes from the feasibility
@@ -194,3 +221,10 @@ yourself putting logic in an adapter, it belongs in core.
 Client modification is against Discord's ToS. Enforcement against plugin users is
 effectively nonexistent, but this is unofficial and can break on any Discord
 update. Not affiliated with Discord.
+
+## License
+
+[GPL-3.0-or-later](LICENSE). The Vencord adapter builds against Vencord, which
+is GPL-3.0 itself. Contributions are welcome as pull requests; put behaviour in
+`src/core`, never in an adapter, and mark anything unverified against live
+Discord internals with `TODO(verify)`.

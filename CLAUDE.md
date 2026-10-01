@@ -146,8 +146,7 @@ Vencord's whole source and floods errors).
 
 ## Dev loop
 
-- Vencord checkout: `C:\Users\theta\Documents\Dev\Vencord` (sibling; untouched
-  upstream). Our plugin junction-linked into its `src/userplugins/StreamWindows`
+- Vencord checkout: `../Vencord` (a sibling directory; untouched upstream). Our plugin junction-linked into its `src/userplugins/StreamWindows`
   via `node scripts/link-into-vencord.mjs`.
 - Our own `tsconfig.json` gives esbuild the `@utils`/`@webpack` aliases
   (baseUrl -> `../Vencord`), needed because the junction resolves outside Vencord.
@@ -158,9 +157,9 @@ Vencord's whole source and floods errors).
 
 ## Environment
 
-- Windows 11, PowerShell. Node 24, pnpm 11.24 (global). Discord **stable**
-  desktop, Vencord injected. User runs League + streams in voice a lot (handy
-  for testing).
+- Developed on Windows 11 (PowerShell) with Node 24 and pnpm. Discord **stable**
+  desktop: Vencord injected for the dev loop, BetterDiscord for checking the
+  shipped build.
 
 ## Conventions
 

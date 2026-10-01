@@ -50,7 +50,7 @@ const patch: NavContextMenuPatchCallback = (children, props) => {
 export default definePlugin({
     name: "StreamWindows",
     description: "Right-click a streamer in voice → pop their stream into its own OS window (multi-monitor).",
-    authors: [{ name: "theta", id: 0n } as any],
+    authors: [{ name: "Cranium AI", id: 0n } as any],
     commands: [
         {
             name: "streamwindows",
